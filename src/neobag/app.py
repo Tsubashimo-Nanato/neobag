@@ -184,13 +184,13 @@ class NeoBagApp(App):
         print(self.recorder.error or f"neobag: saved {self.recorder.output_path}", flush=True)
 
     async def refresh_topics(self) -> None:
-        if self._scanning or self.recorder.is_active or self._starting:
+        if not self.is_running or self._scanning or self.recorder.is_active or self._starting:
             return
         self._scanning = True
         try:
             topics = await asyncio.to_thread(self.discovery.scan)
             # A record click may occur while discovery is in flight.
-            if self.recorder.is_active or self._starting:
+            if not self.is_running or self.recorder.is_active or self._starting:
                 return
             self.topics = topics
             self.discovery_error = ""
@@ -318,12 +318,16 @@ class NeoBagApp(App):
             self.update_summary()
 
     def lock_controls(self, locked: bool) -> None:
+        if not self.is_running:
+            return
         for key in ("search", "category", "all", "none", "category-all", "category-none", "topics", "parent", "name", "start", "refresh"):
             self.query_one(f"#{key}").disabled = locked
         self.query_one("#stop").disabled = not self.recorder.is_active
 
     def poll_recorder(self) -> None:
-        if self._starting:
+        # Textual can deliver an already queued timer while pruning widgets.
+        # Process cleanup continues in on_unmount / finish_cleanup instead.
+        if not self.is_running or self._starting:
             return
         self.recorder.poll()
         self.lines.extend(self.recorder.drain_logs())
@@ -346,19 +350,23 @@ class NeoBagApp(App):
             self.exit()
 
     async def sample_resources(self) -> None:
-        if self._sampling:
+        if not self.is_running or self._sampling:
             return
         self._sampling = True
         try:
             parent = Path(self.query_one("#parent", Input).value).expanduser()
             snapshot = await asyncio.to_thread(self.monitor.sample, parent)
-            self.show_resources(snapshot)
+            if self.is_running:
+                self.show_resources(snapshot)
         except Exception as exc:
-            self.query_one("#warning", Static).update(f"Resource monitor unavailable: {exc}")
+            if self.is_running:
+                self.query_one("#warning", Static).update(f"Resource monitor unavailable: {exc}")
         finally:
             self._sampling = False
 
     def show_resources(self, s: ResourceSnapshot) -> None:
+        if not self.is_running:
+            return
         def percent(value):
             return "N/A" if value is None else f"{value:.0f}%"
         self.query_one("#cpu", Static).update(f"CPU  {percent(s.cpu_percent)}")
@@ -374,6 +382,8 @@ class NeoBagApp(App):
         warning.update(" | ".join(s.warnings) if s.warnings else "Resources normal · pressure alerts estimate risk; recording rate is not measured.")
 
     def update_summary(self) -> None:
+        if not self.is_running:
+            return
         prefix = f"{len(self.selected)} selected / {len(self.topics)} discovered"
         text = self.discovery_error or self.notice
         self.query_one("#summary", Static).update(f"{prefix}  ·  {text}")

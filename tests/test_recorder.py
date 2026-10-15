@@ -219,7 +219,7 @@ def test_record_and_gracefully_stop_with_metadata(tmp_path, fake_ros2):
         assert not recorder.is_active
         assert recorder.returncode == 0
         assert recorder.error is None
-        assert (output / "signals.txt").read_text().splitlines() == [str(signal.SIGINT)]
+        assert (output / "signals.txt").read_text().splitlines() == [str(int(signal.SIGINT))]
     finally:
         cleanup(recorder)
 
@@ -248,7 +248,7 @@ def test_stop_timeout_keeps_process_alive_and_sends_sigint_only_once(tmp_path, f
         recorder.request_stop()
         assert recorder.is_active
         assert "No forced kill" in recorder.error
-        assert (output / "signals.txt").read_text().splitlines() == [str(signal.SIGINT)]
+        assert (output / "signals.txt").read_text().splitlines() == [str(int(signal.SIGINT))]
     finally:
         cleanup(recorder)
 

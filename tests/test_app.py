@@ -479,3 +479,20 @@ async def test_logs_modal_remains_usable_while_recorder_and_resource_timers_tick
         assert await pilot.click("#stop", offset=(2, 1))
         recorder.finish_stop()
         app.poll_recorder()
+
+
+async def test_late_timer_callbacks_after_ui_unmount_are_ignored(bundle):
+    app, discovery, _, monitor = bundle
+    async with app.run_test(size=(80, 24)) as pilot:
+        await settle(app, pilot)
+    assert not app.is_running
+    scans, samples = discovery.calls, len(monitor.calls)
+    # A queued callback may arrive after Textual has removed the widgets.
+    app.poll_recorder()
+    await app.refresh_topics()
+    await app.sample_resources()
+    app.show_resources(monitor.snapshot)
+    app.lock_controls(False)
+    app.update_summary()
+    assert discovery.calls == scans
+    assert len(monitor.calls) == samples
