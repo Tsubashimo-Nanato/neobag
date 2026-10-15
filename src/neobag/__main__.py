@@ -10,11 +10,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="neobag — live ROS 2 terminal recorder")
     parser.add_argument("--output", type=Path, default=Path.home() / "bags", help="Parent directory for bags (default: ~/bags)")
     parser.add_argument("--name", default=None, help="Initial bag name")
-    parser.add_argument("--storage", choices=("sqlite3", "mcap"), default="sqlite3")
-    parser.add_argument("--qos-overrides", type=Path, help="Optional rosbag QoS YAML for selected topics (default: ROS adaptive QoS)")
+    parser.add_argument("--storage", choices=("auto", "sqlite3", "mcap"), default="auto", help="Prefer installed MCAP; otherwise SQLite3")
+    parser.add_argument("--recorder-rmw", choices=("auto", "inherit", "cyclonedds", "fastrtps"), default="auto", help="Recorder only: auto honors explicit DDS settings, otherwise prefers installed Cyclone DDS")
+    parser.add_argument("--cache-mib", type=int, help="Per-buffer cache size, 16–8192 MiB (two buffers); default adapts to RAM, up to 512 MiB each")
+    parser.add_argument("--qos-overrides", type=Path, help="Optional rosbag QoS YAML for selected topics (overrides automatic receiver buffering)")
+    parser.add_argument("--native-qos", action="store_true", help="Disable automatic buffering for small sensor/control messages")
     parser.add_argument("--doctor", action="store_true", help="Check ROS discovery and local resources, then exit")
-    parser.add_argument("--version", action="version", version="neobag 0.1.0")
+    parser.add_argument("--version", action="version", version="neobag 0.2.0")
     args = parser.parse_args()
+    if args.cache_mib is not None and not 16 <= args.cache_mib <= 8192:
+        parser.error("--cache-mib must be between 16 and 8192")
     if args.doctor:
         from dataclasses import asdict
         from .topics import TopicDiscovery
@@ -31,7 +36,8 @@ def main() -> None:
     from .app import NeoBagApp
     from .recorder import Recorder
     app = NeoBagApp(output_parent=args.output, bag_name=args.name, storage=args.storage,
-                   recorder=Recorder(qos_overrides=args.qos_overrides))
+                   recorder=Recorder(qos_overrides=args.qos_overrides, rmw=args.recorder_rmw, cache_mib=args.cache_mib,
+                                     buffer_qos=not args.native_qos))
     if args.qos_overrides:
         app.notice = f"Custom QoS: {args.qos_overrides}. Choose topics to record."
     try:

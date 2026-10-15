@@ -44,19 +44,20 @@ async def main() -> None:
                 await asyncio.sleep(1)
             else:
                 raise RuntimeError("Test publisher was not discovered")
-            app = NeoBagApp(output_parent=parent.resolve(), bag_name=name, recorder=recorder)
+            app = NeoBagApp(output_parent=parent.resolve(), bag_name=name, storage="sqlite3", recorder=recorder)
             async with app.run_test(size=(120, 36)) as pilot:
-                for _ in range(80):
+                for _ in range(300):
                     if any(t.name == "/neobag_test/text" for t in app.topics):
                         break
                     await pilot.pause(0.1)
                 assert any(t.name == "/neobag_test/text" for t in app.topics)
+                app._pending_profile = None
                 app.selected = {"/neobag_test/text"}
                 app.rebuild_topics()
                 await pilot.pause()
                 app.save_screenshot(str(evidence / f"{name}_ready.svg"))
                 await pilot.click("#start")
-                for _ in range(80):
+                for _ in range(300):
                     if recorder.is_active:
                         break
                     await pilot.pause(0.1)

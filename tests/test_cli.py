@@ -31,7 +31,7 @@ def test_custom_qos_reaches_recorder_and_cleanup(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["neobag", "--qos-overrides", str(qos), "--output", str(tmp_path), "--name", "capture"])
     with pytest.raises(RuntimeError, match="terminal disconnected"):
         main()
-    assert calls["recorder"] == {"qos_overrides": qos}
+    assert calls["recorder"] == {"qos_overrides": qos, "rmw": "auto", "cache_mib": None, "buffer_qos": True}
     assert calls["app"]["output_parent"] == tmp_path
     assert calls["app"]["bag_name"] == "capture"
     assert str(qos) in calls["notice"]

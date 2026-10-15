@@ -9,14 +9,18 @@ from __future__ import annotations
 
 from collections import deque
 import math
+import json
 import os
 from pathlib import Path
 import re
 import signal
 import subprocess
 import threading
+import tempfile
 import time
 from typing import IO, Sequence
+
+from .settings import resolve_settings, buffered_qos, CYCLONE_RECEIVER_CONFIG
 
 
 class RecorderError(RuntimeError):
@@ -42,6 +46,9 @@ class Recorder:
         stop_timeout: float = 30.0,
         max_log_lines: int = 250,
         qos_overrides: Path | None = None,
+        rmw: str = "auto",
+        cache_mib: int | None = None,
+        buffer_qos: bool = True,
     ) -> None:
         if isinstance(ros2_command, str) or not ros2_command:
             raise ValueError("ros2_command must be a nonempty sequence of arguments")
@@ -53,6 +60,14 @@ class Recorder:
         self._stop_timeout = stop_timeout
         self._max_log_lines = max_log_lines
         self.qos_overrides = Path(qos_overrides).expanduser() if qos_overrides is not None else None
+        self.rmw = rmw
+        self.cache_mib = cache_mib
+        self.buffer_qos = buffer_qos
+        self._qos_directory = None
+        self._generated_qos = None
+        self.settings_notice = ""
+        self.configuration_warning = ""
+        self.resolved_storage = ""
         self._process: subprocess.Popen[str] | None = None
         self._pty_master: int | None = None
         self._logs: deque[str] = deque(maxlen=max_log_lines)
@@ -65,6 +80,7 @@ class Recorder:
         self.error: str | None = None
         self.returncode: int | None = None
         self.started_at: float | None = None
+        self.transport_lost = 0
 
     @property
     def pid(self) -> int | None:
@@ -112,7 +128,7 @@ class Recorder:
         topics: list[str],
         output_parent: Path,
         bag_name: str,
-        storage: str = "sqlite3",
+        storage: str = "auto",
     ) -> Path:
         """Validate and launch; the recorder itself creates the bag directory."""
         self.poll()
@@ -145,6 +161,29 @@ class Recorder:
             raise FileExistsError(f"Bag output already exists: {output}")
         parent.mkdir(parents=True, exist_ok=True)
 
+        storage, environment, cache = resolve_settings(self._command, storage, self.rmw, self.cache_mib)
+        self.resolved_storage = storage
+        self.settings_notice = f"{storage} · cache {cache / 2**20:.0f} MiB × 2 · {environment.get('RMW_IMPLEMENTATION', 'inherited RMW')}"
+        if environment.get("CYCLONEDDS_URI") == CYCLONE_RECEIVER_CONFIG:
+            self.settings_notice += " (async RX)"
+        self.configuration_warning = ""
+        self._cleanup_qos()
+        if qos_path is None and self.buffer_qos:
+            try:
+                profiles = buffered_qos(self._command, topics, environment)
+                if profiles:
+                    self._qos_directory = tempfile.TemporaryDirectory(prefix="neobag-qos-")
+                    qos_path = Path(self._qos_directory.name) / "receiver-qos.yaml"
+                    # JSON is a YAML subset accepted by rosbag's YAML loader.
+                    self._generated_qos = json.dumps(profiles, indent=2)
+                    qos_path.write_text(self._generated_qos, encoding="utf-8")
+                self.settings_notice += f" · buffered QoS: {len(profiles)} topics"
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                self._cleanup_qos()
+                qos_path = None
+                self.configuration_warning = f"Buffered receiver QoS unavailable ({type(exc).__name__}); using ROS adaptive QoS."
+                self.settings_notice += " · " + self.configuration_warning
+
         self.output_path = output
         self.error = None
         self.returncode = None
@@ -153,9 +192,11 @@ class Recorder:
         self._finalized = False
         self._process = None
         self._logs = deque(maxlen=self._max_log_lines)
+        self.transport_lost = 0
         arguments = [
             *self._command, "bag", "record", "--storage", storage,
             "--output", str(output), "--include-hidden-topics",
+            "--max-cache-size", str(cache),
         ]
         if qos_path is not None:
             arguments.extend(("--qos-profile-overrides-path", str(qos_path)))
@@ -184,10 +225,12 @@ class Recorder:
                 errors="replace",
                 bufsize=1,
                 shell=False,
+                env=environment,
                 **kwargs,
             )
         except OSError as exc:
             self._close_pty()
+            self._cleanup_qos()
             self.state = "failed"
             self.error = f"Could not start ros2 bag record: {exc}"
             raise RecorderError(self.error) from exc
@@ -212,6 +255,9 @@ class Recorder:
             while chunk := stream.readline(4096):
                 with self._log_lock:
                     destination.append(chunk.rstrip("\r\n"))
+                    match = re.search(r"Number of messages lost on the transport layer:\s*(\d+)", chunk)
+                    if match:
+                        self.transport_lost = max(self.transport_lost, int(match[1]))
         except (OSError, ValueError) as exc:
             with self._log_lock:
                 destination.append(f"Recorder log stream closed: {exc}")
@@ -267,6 +313,14 @@ class Recorder:
 
         self._finalized = True
         self._close_pty()
+        if self._generated_qos is not None and self.output_path and self.output_path.is_dir():
+            try:
+                with (self.output_path / "neobag-receiver-qos.yaml").open("x", encoding="utf-8") as profile:
+                    profile.write(self._generated_qos)
+            except OSError as exc:
+                with self._log_lock:
+                    self._logs.append(f"Could not retain receiver QoS settings: {exc}")
+        self._cleanup_qos()
         metadata = self.output_path / "metadata.yaml" if self.output_path else None
         try:
             has_metadata = bool(metadata and metadata.is_file() and metadata.stat().st_size > 0)
@@ -294,3 +348,9 @@ class Recorder:
         if self._pty_master is not None:
             os.close(self._pty_master)
             self._pty_master = None
+
+    def _cleanup_qos(self) -> None:
+        if self._qos_directory is not None:
+            self._qos_directory.cleanup()
+            self._qos_directory = None
+        self._generated_qos = None

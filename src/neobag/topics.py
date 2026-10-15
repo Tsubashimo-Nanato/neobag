@@ -155,7 +155,7 @@ class TopicDiscovery:
         command = [
             *self.ros2_command,
             "topic", "list", "-t", "--include-hidden-topics",
-            "--no-daemon", "--spin-time", "1",
+            "--no-daemon", "--spin-time", "2",
         ]
         try:
             result = subprocess.run(

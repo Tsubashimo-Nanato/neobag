@@ -174,3 +174,24 @@ def test_cli_report_cannot_modify_bag_files(tmp_path, capsys):
     assert compare_module.main([str(source), str(source), "--output", str(database)]) == 2
     assert "outside both bag directories" in capsys.readouterr().out
     assert database.read_bytes() == before
+
+
+def test_sqlite_to_mcap_duplicates_and_corruption(tmp_path):
+    from mcap.writer import Writer
+    source = make_bag(tmp_path / "source", [b"same", b"same", b"other"])
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    path = dest / "recorded.mcap"
+    with path.open("wb") as stream:
+        writer = Writer(stream)
+        writer.start(profile="ros2")
+        schema = writer.register_schema("sensor_msgs/msg/Image", "ros2msg", b"uint8[] data")
+        channel = writer.register_channel("/image", "cdr", schema)
+        for index, payload in enumerate([b"other", b"same", b"same"]):
+            writer.add_message(channel, index, payload, index)
+        writer.finish()
+    assert compare_bags(source, dest)["exact_payload_match"]
+    with path.open("r+b") as stream:
+        stream.truncate(30)
+    with pytest.raises(BagComparisonError):
+        compare_bags(source, dest)

@@ -23,10 +23,11 @@ import xml.etree.ElementTree as ET
 
 import yaml
 from neobag.app import NeoBagApp
+from neobag.profiles import ProfileStore
 from neobag.recorder import Recorder
 from neobag.resources import ResourceMonitor
 from neobag.topics import TopicDiscovery
-from textual.widgets import Static
+from textual.widgets import Static, Input, Select
 
 from compare_bags import compare_bags
 
@@ -205,7 +206,8 @@ async def run(args):
         qos.write_bytes(data)
         qos_sha256 = hashlib.sha256(data).hexdigest()
     recorder = CaptureRecorder(qos_overrides=qos)
-    app = CaptureApp(output, output_parent=output, bag_name="recorded", recorder=recorder)
+    app = CaptureApp(output, output_parent=output, bag_name="recorded", recorder=recorder,
+                     profiles=ProfileStore(output / "test-profiles.json"))
     player_log = (output / "player.log").open("w")
     command = ["ros2", "bag", "play", "--input", str(source), "--start-paused",
                "--disable-keyboard-controls", "--wait-for-all-acked", "10000",
@@ -241,6 +243,43 @@ async def run(args):
                 await pilot.pause(0.25)
             else:
                 raise RuntimeError(f"Source topics not discovered: {set(expected) - found}")
+            # Exercise named profiles against the actual paused ROS graph.
+            original_selection = set(app.selected)
+            assert await pilot.click("#profiles")
+            await pilot.pause(0.3)
+            app.screen.query_one("#profile-name", Input).value = "Default sensors"
+            assert await pilot.click("#profile-save")
+            await pilot.pause(0.4)
+            assert await pilot.click("#profile-back")
+            await pilot.pause(0.2)
+            assert await pilot.click("#all")
+            await pilot.pause(0.2)
+            all_selection = set(app.selected)
+            assert await pilot.click("#profiles")
+            await pilot.pause(0.3)
+            app.screen.query_one("#profile-name", Input).value = "All live topics"
+            assert await pilot.click("#profile-save")
+            await pilot.pause(0.4)
+            app.screen.query_one("#profile-choice", Select).value = "Default sensors"
+            await pilot.pause(0.2)
+            assert await pilot.click("#profile-load")
+            await pilot.pause(0.2)
+            assert app.selected == original_selection
+            assert await pilot.click("#all")
+            await pilot.pause(0.2)
+            assert await pilot.click("#profiles")
+            await pilot.pause(0.3)
+            assert await pilot.click("#profile-save")  # Same-name update.
+            await pilot.pause(0.4)
+            saved = ProfileStore(output / "test-profiles.json").read()
+            assert set(saved["profiles"]["Default sensors"]["topics"]) == all_selection
+            assert set(saved["profiles"]["All live topics"]["topics"]) == all_selection
+            app.save_screenshot(str(output / "profiles.svg"))
+            result["profiles"] = {"save_load_update_verified": True,
+                                  "default_sensor_topics": sorted(original_selection),
+                                  "saved_names": sorted(saved["profiles"])}
+            assert await pilot.click("#profile-back")
+            await pilot.pause(0.2)
             # Exercise the real All button and preserve exactly the current graph.
             assert await pilot.click("#all")
             await pilot.pause(0.3)
@@ -312,6 +351,7 @@ async def run(args):
             app.save_screenshot(str(output / "saved.svg"))
             await pilot.press("ctrl+q")
         result.update(recorder_state=recorder.state, recorder_returncode=recorder.returncode,
+                      recorder_settings=recorder.settings_notice,
                       cpu_pressure_alert_visible=app.pressure_shown,
                       cpu_pressure_alert_cleared=app.pressure_cleared,
                       pressure_screenshot_monotonic=app.pressure_capture_monotonic,

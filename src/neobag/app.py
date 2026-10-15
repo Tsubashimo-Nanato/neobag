@@ -19,6 +19,64 @@ from textual.widgets import Button, Footer, Input, RichLog, Select, SelectionLis
 from .recorder import Recorder
 from .resources import ResourceMonitor, ResourceSnapshot
 from .topics import Topic, TopicDiscovery
+from .profiles import ProfileStore, resolve_profile
+
+
+class ProfileScreen(ModalScreen):
+    """Save current checkboxes, or load a named selection for editing."""
+    BINDINGS = [("escape", "dismiss", "Back")]
+
+    def compose(self) -> ComposeResult:
+        yield Static("Topic profiles · select a saved profile to load it", id="profile-title")
+        yield Select([], id="profile-choice", prompt="Saved profiles")
+        yield Input(placeholder="Profile name", id="profile-name", max_length=64)
+        with Horizontal(id="profile-actions"):
+            yield Button("Load", id="profile-load")
+            yield Button("Save / update", id="profile-save")
+            yield Button("Back", id="profile-back")
+        yield Static("Save stores the current checkboxes. Same name updates; a new name creates a copy.\nOffline selections are retained. Load, close, edit checkboxes, then save to update.", id="profile-status", markup=False)
+
+    def on_mount(self) -> None:
+        self.reload_choices()
+        self.query_one("#profile-name", Input).value = self.app.profile_name
+
+    def reload_choices(self) -> None:
+        try:
+            data = self.app.profiles.read()
+            choice = self.query_one("#profile-choice", Select)
+            choice.set_options([(name, name) for name in data["profiles"]])
+            choice.value = data["active"]
+        except (OSError, ValueError) as exc:
+            self.query_one("#profile-status", Static).update(f"Cannot read profiles: {exc}")
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        event.stop()
+        if isinstance(event.value, str):
+            self.query_one("#profile-name", Input).value = event.value
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        key = event.button.id
+        if key == "profile-back":
+            self.dismiss()
+            return
+        try:
+            if key == "profile-save":
+                name = self.query_one("#profile-name", Input).value.strip()
+                self.app.profiles.save(name, self.app.selected)
+                self.app.profile_name = name
+                self.app._pending_profile = None
+                self.reload_choices()
+                self.query_one("#profile-status", Static).update(f"Saved {name}: {len(self.app.selected)} topics. This profile loads on next start.")
+            elif key == "profile-load":
+                name = self.query_one("#profile-choice", Select).value
+                if not isinstance(name, str):
+                    raise ValueError("Choose a saved profile")
+                profile = self.app.profiles.activate(name)
+                self.app.apply_profile(name, profile)
+                self.dismiss()
+        except (OSError, ValueError, KeyError) as exc:
+            self.query_one("#profile-status", Static).update(f"Cannot save/load profile: {exc}")
 
 
 class LogScreen(ModalScreen):
@@ -65,6 +123,10 @@ class NeoBagApp(App):
     Footer { height: 1; background: #14233a; }
     LogScreen { padding: 2 4; background: #0b1220 95%; }
     #log { height: 1fr; border: round #62d4c5; }
+    ProfileScreen { padding: 1 2; background: #0b1220 98%; }
+    #profile-title { height: 2; color: #62d4c5; }
+    #profile-actions { height: 3; }
+    #profile-status { height: auto; padding-top: 1; }
     Screen.compact #metrics { height: 1; }
     Screen.compact .metric { border: none; background: #14233a; }
     Screen.compact #selection-actions { height: 1; }
@@ -75,12 +137,13 @@ class NeoBagApp(App):
         ("ctrl+s", "start_recording", "Record"),
         ("ctrl+t", "stop_recording", "Stop"),
         ("ctrl+l", "logs", "Logs"),
+        ("ctrl+o", "profiles", "Profiles"),
         ("ctrl+q", "safe_quit", "Quit"),
         ("ctrl+c", "safe_quit", "Quit"),
     ]
 
     def __init__(self, output_parent: Path | None = None, bag_name: str | None = None,
-                 storage: str = "sqlite3", discovery=None, recorder=None, monitor=None):
+                 storage: str = "auto", discovery=None, recorder=None, monitor=None, profiles=None):
         super().__init__()
         self.output_parent = output_parent or Path.home() / "bags"
         self.initial_name = bag_name or self.new_name()
@@ -89,10 +152,21 @@ class NeoBagApp(App):
         self.recorder = recorder or Recorder()
         self.monitor = monitor or ResourceMonitor()
         self.topics: list[Topic] = []
+        self._known_topics: dict[str, Topic] = {}
         self.selected: set[str] = set()
         self.lines: deque[str] = deque(maxlen=400)
         self.discovery_error = ""
         self.notice = "Choose topics, output directory and bag name."
+        self.profiles = profiles or ProfileStore()
+        self.profile_name = ""
+        self._pending_profile = None
+        try:
+            data = self.profiles.read()
+            self.profile_name = data["active"]
+            self._pending_profile = data["profiles"][self.profile_name]
+            self.selected = set(self._pending_profile["topics"])
+        except (OSError, ValueError) as exc:
+            self.notice = f"Cannot read profiles: {exc}"
         self._scanning = False
         self._sampling = False
         self._starting = False
@@ -121,6 +195,7 @@ class NeoBagApp(App):
             yield Button("None", id="none", tooltip="Clear every selection")
             yield Button("Category +", id="category-all", tooltip="Select every topic in the chosen category")
             yield Button("Category −", id="category-none", tooltip="Clear the chosen category")
+            yield Button("Profiles", id="profiles", tooltip="Save, load and update named topic selections · Ctrl+O")
         yield SelectionList[str](id="topics")
         with Horizontal(id="destination"):
             yield Input(str(self.output_parent), placeholder="Output directory", id="parent")
@@ -193,15 +268,15 @@ class NeoBagApp(App):
             if not self.is_running or self.recorder.is_active or self._starting:
                 return
             self.topics = topics
+            self._known_topics.update({topic.name: topic for topic in topics})
             self.discovery_error = ""
-            live = {t.name for t in topics}
-            removed = self.selected - live
-            self.selected.intersection_update(live)
-            if removed:
-                self.notice = f"{len(removed)} selected topic(s) disappeared; selection updated."
+            if self._pending_profile is not None and topics:
+                self.selected = resolve_profile(self._pending_profile, [t.name for t in topics])
+                if not self._pending_profile.get("patterns"):
+                    self._pending_profile = None
             category = self.query_one("#category", Select)
             old_value = category.value
-            categories = sorted({t.category for t in topics})
+            categories = sorted({t.category for t in topics} | {"Offline"})
             category.set_options([("All categories", "all")] + [(c, c) for c in categories])
             category.value = old_value if old_value in categories else "all"
             self.rebuild_topics()
@@ -215,8 +290,14 @@ class NeoBagApp(App):
     def visible_topics(self) -> list[Topic]:
         query = self.query_one("#search", Input).value.strip().casefold()
         category = self.query_one("#category", Select).value
-        return [t for t in self.topics if (category == "all" or t.category == category)
+        return [t for t in self.display_topics() if (category == "all" or t.category == category)
                 and (not query or query in f"{t.name} {' '.join(t.types)}".casefold())]
+
+    def display_topics(self) -> list[Topic]:
+        live = {topic.name for topic in self.topics}
+        offline = [Topic(name, self._known_topics[name].types if name in self._known_topics else (), "Offline")
+                   for name in sorted(self.selected - live)]
+        return self.topics + offline
 
     def rebuild_topics(self) -> None:
         widget = self.query_one("#topics", SelectionList)
@@ -230,6 +311,8 @@ class NeoBagApp(App):
             widget.clear_options()
             for topic in visible:
                 label = Text(topic.name, style="bold")
+                if topic.category == "Offline":
+                    label.append("  [not in latest scan]", style="#ffcd78")
                 label.append(f"  {' | '.join(topic.types)}", style="#7993ab")
                 widget.add_option((label, topic.name, topic.name in self.selected))
         names = [topic.name for topic in visible]
@@ -244,6 +327,7 @@ class NeoBagApp(App):
     def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
         if self._rebuilding or self.recorder.is_active or self._starting:
             return
+        self._pending_profile = None
         visible = {t.name for t in self.visible_topics()}
         self.selected.difference_update(visible)
         self.selected.update(event.selection_list.selected)
@@ -266,22 +350,27 @@ class NeoBagApp(App):
             self.action_stop_recording()
         elif key == "refresh":
             self.action_refresh()
+        elif key == "profiles":
+            self.action_profiles()
         elif key in ("all", "none", "category-all", "category-none"):
             if self.recorder.is_active or self._starting:
                 return
+            self._pending_profile = None
             category = self.query_one("#category", Select).value
-            names = {t.name for t in self.topics if key in ("all", "none") or category == "all" or t.category == category}
+            names = {t.name for t in self.display_topics() if key in ("all", "none") or category == "all" or t.category == category}
             if key in ("all", "category-all"):
                 self.selected.update(names)
             else:
                 self.selected.difference_update(names)
+                if key == "none":
+                    self.selected.clear()
             self.rebuild_topics()
 
     def action_refresh(self) -> None:
         self.run_worker(self.refresh_topics())
 
     def action_start_recording(self) -> None:
-        if not self.recorder.is_active and not self._starting:
+        if not isinstance(self.screen, ModalScreen) and not self.recorder.is_active and not self._starting:
             self.run_worker(self.start_recording())
 
     async def start_recording(self) -> None:
@@ -292,7 +381,9 @@ class NeoBagApp(App):
             self.update_summary()
             return
         self._starting = True
+        self.notice = "Preparing recorder · checking storage and receiver settings…"
         self.lock_controls(True)
+        self.update_summary()
         parent = Path(self.query_one("#parent", Input).value).expanduser()
         name = self.query_one("#name", Input).value.strip()
         try:
@@ -300,6 +391,10 @@ class NeoBagApp(App):
                 self.recorder.start, sorted(self.selected), parent, name, self.storage,
             ))
             self.notice = f"Recording to {path}"
+            settings = getattr(self.recorder, "settings_notice", "")
+            if settings:
+                self.query_one("#brand", Static).update(f"neobag / domain {os.environ.get('ROS_DOMAIN_ID', '0')} · {settings}")
+                self.lines.append(f"Recorder settings: {settings}")
             self.lines.append(self.notice)
             if self._quit_after_stop:
                 self.recorder.request_stop()
@@ -320,7 +415,7 @@ class NeoBagApp(App):
     def lock_controls(self, locked: bool) -> None:
         if not self.is_running:
             return
-        for key in ("search", "category", "all", "none", "category-all", "category-none", "topics", "parent", "name", "start", "refresh"):
+        for key in ("search", "category", "all", "none", "category-all", "category-none", "profiles", "topics", "parent", "name", "start", "refresh"):
             self.query_one(f"#{key}").disabled = locked
         self.query_one("#stop").disabled = not self.recorder.is_active
 
@@ -337,6 +432,9 @@ class NeoBagApp(App):
             seconds = int(time.monotonic() - self.recorder.started_at)
             elapsed = f"  {seconds // 60:02d}:{seconds % 60:02d}"
         self.query_one("#record-state", Static).update(state.upper() + elapsed)
+        lost = getattr(self.recorder, "transport_lost", 0)
+        if lost:
+            self.query_one("#record-state", Static).update(f"{state.upper()} · LOST ≥{lost}")
         if self.recorder.error:
             self.notice = self.recorder.error
         if state != self._last_state:
@@ -378,20 +476,44 @@ class NeoBagApp(App):
         free = "N/A" if s.disk_free_bytes is None else f"{s.disk_free_bytes / 2**30:.1f}G"
         self.query_one("#disk", Static).update(f"FREE {free}")
         warning = self.query_one("#warning", Static)
-        warning.set_class(bool(s.warnings), "pressure")
-        warning.update(" | ".join(s.warnings) if s.warnings else "Resources normal · pressure alerts estimate risk; recording rate is not measured.")
+        warnings = list(s.warnings)
+        configuration_warning = getattr(self.recorder, "configuration_warning", "")
+        if configuration_warning:
+            warnings.append(configuration_warning)
+        lost = getattr(self.recorder, "transport_lost", 0)
+        if lost:
+            warnings.insert(0, f"ROS reported {lost} transport messages lost. Saved bag is incomplete.")
+        warning.set_class(bool(warnings), "pressure")
+        warning.update(" | ".join(warnings) if warnings else "Resources normal · pressure alerts estimate risk; recording rate is not measured.")
 
     def update_summary(self) -> None:
         if not self.is_running:
             return
         prefix = f"{len(self.selected)} selected / {len(self.topics)} discovered"
+        offline = self.selected - {t.name for t in self.topics}
+        if offline:
+            prefix += f" / {len(offline)} offline (wait for publisher)"
         text = self.discovery_error or self.notice
+        lost = getattr(self.recorder, "transport_lost", 0)
+        if lost:
+            text = f"ROS reported ≥{lost} messages lost · {text}"
         self.query_one("#summary", Static).update(f"{prefix}  ·  {text}")
         if not self.recorder.is_active and not self._starting:
             self.query_one("#start").disabled = not self.selected or bool(self.discovery_error)
 
     def action_logs(self) -> None:
         self.push_screen(LogScreen(list(self.lines)))
+
+    def action_profiles(self) -> None:
+        if not self.recorder.is_active and not self._starting and not isinstance(self.screen, ModalScreen):
+            self.push_screen(ProfileScreen())
+
+    def apply_profile(self, name: str, profile: dict) -> None:
+        self.profile_name = name
+        self.selected = resolve_profile(profile, [t.name for t in self.topics])
+        self._pending_profile = profile if not self.topics or profile.get("patterns") else None
+        self.notice = f"Loaded profile: {name}. Edit checkboxes, then Profiles → Save / update."
+        self.rebuild_topics()
 
     def action_safe_quit(self) -> None:
         self._quit_after_stop = True

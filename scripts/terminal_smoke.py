@@ -16,6 +16,7 @@ import subprocess
 import sys
 import termios
 import time
+import yaml
 
 
 def main():
@@ -55,19 +56,23 @@ def main():
         os.write(master, b"\t\t\r")
         collect(0.7)
         os.write(master, b"\x13")  # Ctrl+S: start
-        collect(4)
+        deadline = time.monotonic() + 25
+        while not bag.is_dir() and proc.poll() is None and time.monotonic() < deadline:
+            collect(0.25)
         assert bag.is_dir(), "Keyboard start did not produce bag output"
+        collect(3)
         os.kill(proc.pid, signal.SIGINT)
         collect(8)
         proc.wait(timeout=10)
         assert proc.returncode == 0, proc.returncode
         assert (bag / "metadata.yaml").is_file(), "SIGINT did not finalize metadata"
-        with sqlite3.connect(str(next(bag.glob("*.db3")))) as db:
-            count = db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        info = yaml.safe_load((bag / "metadata.yaml").read_text())["rosbag2_bagfile_information"]
+        count = info["message_count"]
+        assert count > 0, "No ROS messages were recorded"
         result = {"domain": os.environ["ROS_DOMAIN_ID"], "bag": str(bag.resolve()), "command": command,
                   "terminal": "Linux PTY 120x36", "selection": "Tab/Tab/Enter -> All",
                   "start": "Ctrl+S", "stop": "external SIGINT", "exit_code": proc.returncode,
-                  "metadata_exists": True, "messages": count}
+                  "metadata_exists": True, "messages": count, "storage": info["storage_identifier"]}
         (evidence / "terminal_smoke.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         print(json.dumps(result, indent=2))
     finally:

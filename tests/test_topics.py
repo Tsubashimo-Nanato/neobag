@@ -79,7 +79,7 @@ def test_discovery_uses_wrapper_and_hidden_topics_without_daemon():
     args, kwargs = run.call_args
     assert args[0] == [
         "micromamba", "run", "-n", "ros2-jazzy", "ros2",
-        "topic", "list", "-t", "--include-hidden-topics", "--no-daemon", "--spin-time", "1",
+        "topic", "list", "-t", "--include-hidden-topics", "--no-daemon", "--spin-time", "2",
     ]
     assert kwargs["timeout"] == 8
     assert kwargs["capture_output"] is True

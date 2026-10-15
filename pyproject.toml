@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neobag"
-version = "0.1.0"
+version = "0.2.0"
 description = "A small live ROS 2 bag recorder for your terminal"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 dependencies = ["textual>=8.2.8,<9", "psutil>=5.9,<8"]
 
 [project.optional-dependencies]
-test = ["pytest>=8", "pytest-asyncio>=0.24", "PyYAML>=6"]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "PyYAML>=6", "mcap>=1.2,<2"]
 
 [project.scripts]
 neobag = "neobag.__main__:main"

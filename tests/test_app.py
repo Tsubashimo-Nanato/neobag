@@ -18,6 +18,12 @@ from textual.widgets import Button, Input, Select, SelectionList, Static
 from neobag.app import NeoBagApp
 from neobag.resources import ResourceSnapshot
 from neobag.topics import Topic
+from neobag.profiles import ProfileStore
+
+
+@pytest.fixture(autouse=True)
+def isolated_profiles(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
 
 SAMPLE_TOPICS = [
@@ -228,10 +234,10 @@ async def test_individual_mouse_and_space_selection_survive_filter_and_refresh(b
         discovery.topics.append(Topic("/new", ("std_msgs/msg/String",), "Other"))
         assert await pilot.click("#refresh", offset=(2, 1))
         await settle(app, pilot)
-        assert app.selected == {"/front/image_raw"}
+        assert app.selected == CAMERA_NAMES
         assert "/new" not in app.selected
-        assert "/rear/image_raw" not in {topic.name for topic in app.visible_topics()}
-        assert "disappeared" in str(app.query_one("#summary", Static).content)
+        assert next(topic for topic in app.visible_topics() if topic.name == "/rear/image_raw").category == "Offline"
+        assert "1 offline" in str(app.query_one("#summary", Static).content)
 
 
 async def test_start_uses_exact_selection_destination_name_and_storage_then_unlocks_on_finish(bundle, tmp_path):
@@ -496,3 +502,76 @@ async def test_late_timer_callbacks_after_ui_unmount_are_ignored(bundle):
     app.update_summary()
     assert discovery.calls == scans
     assert len(monitor.calls) == samples
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 36)])
+async def test_named_profiles_save_load_edit_and_restart(bundle, tmp_path, size):
+    app, _, _, _ = bundle
+    async with app.run_test(size=size) as pilot:
+        await settle(app, pilot)
+        app.selected = {"/imu", "/offline/camera"}
+        app.rebuild_topics()
+        assert await pilot.click("#profiles")
+        await pilot.pause()
+        app.screen.query_one("#profile-name", Input).value = "Sensors"
+        assert await pilot.click("#profile-save")
+        await pilot.pause()
+        assert app.profiles.read()["profiles"]["Sensors"]["topics"] == ["/imu", "/offline/camera"]
+        assert await pilot.click("#profile-back")
+        await pilot.pause()
+        assert await pilot.click("#none")
+        assert not app.selected
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        app.screen.query_one("#profile-choice", Select).value = "Sensors"
+        assert await pilot.click("#profile-load")
+        await pilot.pause()
+        assert app.selected == {"/imu", "/offline/camera"}
+        app.selected.add("/odom")
+        app.rebuild_topics()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert await pilot.click("#profile-save")
+        await pilot.pause()
+        await pilot.pause(0.4)
+        app.screen.query_one("#profile-name", Input).value = "Copy"
+        assert await pilot.click("#profile-save")
+        await pilot.pause()
+        assert set(app.profiles.read()["profiles"]) >= {"Sensors", "Copy"}
+        if os.environ.get("NEOBAG_CAPTURE_UI"):
+            path = Path("evidence/profiles")
+            path.mkdir(parents=True, exist_ok=True)
+            app.save_screenshot(str(path / f"profiles-{size[0]}x{size[1]}.svg"))
+    restarted = NeoBagApp(discovery=FakeDiscovery(), recorder=FakeRecorder(), monitor=FakeMonitor())
+    assert restarted.profile_name == "Copy"
+    assert restarted.selected == {"/imu", "/offline/camera", "/odom"}
+    restarted.finish_cleanup()
+
+
+async def test_reported_loss_remains_visible_after_resources_recover(bundle):
+    app, _, recorder, monitor = bundle
+    async with app.run_test(size=(120, 36)) as pilot:
+        await settle(app, pilot)
+        recorder.transport_lost = 38
+        recorder.state = "finished"
+        recorder.output_path = Path("saved-bag")
+        app.poll_recorder()
+        app.show_resources(monitor.snapshot)
+        assert "LOST" in str(app.query_one("#record-state", Static).content)
+        assert "incomplete" in str(app.query_one("#warning", Static).content)
+        assert "38 messages lost" in str(app.query_one("#summary", Static).content)
+
+
+async def test_offline_profile_topics_can_be_removed_individually(bundle):
+    app, _, _, _ = bundle
+    async with app.run_test(size=(120, 36)) as pilot:
+        await settle(app, pilot)
+        app.selected = {"/imu", "/offline/camera"}
+        app.rebuild_topics()
+        app.query_one("#category", Select).value = "Offline"
+        await pilot.pause()
+        widget = app.query_one("#topics", SelectionList)
+        assert widget.selected == ["/offline/camera"]
+        assert await pilot.click("#topics", offset=(2, 1))
+        await pilot.pause()
+        assert app.selected == {"/imu"}

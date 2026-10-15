@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare finalized SQLite ROS 2 bags without importing ROS or modifying bags.
+"""Compare finalized SQLite/MCAP ROS 2 bags without importing ROS or modifying bags.
 
 Payload multiplicity is compared per topic name and message type. Receipt
 timestamps, message ordering, QoS and recording frequency are intentionally not
@@ -21,7 +21,7 @@ from typing import Any
 
 
 class BagComparisonError(RuntimeError):
-    """A bag cannot be read reliably as finalized SQLite storage."""
+    """A bag cannot be read reliably as finalized storage."""
 
 
 def _yaml_scalar(value: str) -> str:
@@ -91,7 +91,7 @@ def _database_files(directory: Path) -> tuple[Path, list[Path], str]:
     metadata = directory / "metadata.yaml"
     filenames = _metadata_paths(metadata) if metadata.is_file() else None
     method = "metadata.relative_file_paths" if filenames is not None else "sorted_db3_glob"
-    candidates = [directory / name for name in filenames] if filenames is not None else sorted(directory.glob("*.db3"))
+    candidates = [directory / name for name in filenames] if filenames is not None else sorted([*directory.glob("*.db3"), *directory.glob("*.mcap")])
     if not candidates:
         raise BagComparisonError(f"No SQLite .db3 files found in bag: {directory}")
     files: list[Path] = []
@@ -99,8 +99,8 @@ def _database_files(directory: Path) -> tuple[Path, list[Path], str]:
         resolved = candidate.resolve()
         if not resolved.is_relative_to(directory):
             raise BagComparisonError(f"Metadata path leaves the bag directory: {candidate}")
-        if resolved.suffix.lower() != ".db3":
-            raise BagComparisonError(f"Only SQLite .db3 storage is supported: {candidate.name}")
+        if resolved.suffix.lower() not in (".db3", ".mcap"):
+            raise BagComparisonError(f"Only SQLite .db3 and MCAP storage are supported: {candidate.name}")
         if not resolved.is_file():
             raise BagComparisonError(f"A bag database listed in metadata is missing: {candidate}")
         if resolved in files:
@@ -114,6 +114,28 @@ def _database_files(directory: Path) -> tuple[Path, list[Path], str]:
     return directory, files, method
 
 
+def _read_mcap(path, selected, counts, formats, hashes):
+    try:
+        from mcap.reader import NonSeekingReader
+        from mcap.exceptions import McapError
+    except ImportError as exc:
+        raise BagComparisonError("MCAP comparison requires pip install 'mcap>=1.2,<2'") from exc
+    try:
+        with path.open("rb") as stream:
+            # Streaming order avoids retaining the whole bag for timestamp sorting.
+            reader = NonSeekingReader(stream, validate_crcs=True)
+            for schema, channel, message in reader.iter_messages(log_time_order=False):
+                if schema is None or not schema.name or not channel.topic or channel.message_encoding != "cdr":
+                    raise BagComparisonError(f"Invalid ROS MCAP schema/channel in {path}")
+                name, message_type = channel.topic, schema.name
+                counts[name][message_type] += 1
+                formats[name][message_type].add(channel.message_encoding)
+                if selected is None or name in selected:
+                    hashes[name][message_type][hashlib.sha256(message.data).hexdigest()] += 1
+    except (McapError, EOFError) as exc:
+        raise BagComparisonError(f"Cannot read finalized MCAP {path}: {exc}") from exc
+
+
 def _read_bag(directory: Path, selected: set[str] | None) -> dict[str, Any]:
     directory, files, enumeration = _database_files(directory)
     counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
@@ -121,6 +143,12 @@ def _read_bag(directory: Path, selected: set[str] | None) -> dict[str, Any]:
     hashes: dict[str, dict[str, Counter[str]]] = defaultdict(lambda: defaultdict(Counter))
     for database in files:
         before = database.stat()
+        if database.suffix.lower() == ".mcap":
+            _read_mcap(database, selected, counts, formats, hashes)
+            after = database.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise BagComparisonError(f"Bag changed during comparison: {database}")
+            continue
         try:
             # immutable=1 prevents SQLite from creating journal/shared-memory
             # sidecars. Nonempty WAL is rejected above rather than ignored.
@@ -259,7 +287,7 @@ def compare_bags(source: Path, destination: Path, topics: list[str] | None = Non
         "limitations": [
             "Receipt timestamps and message order are not compared.",
             "Payload equality does not establish live recording rate, latency, QoS equality or hardware acceptance.",
-            "Only finalized SQLite .db3 bags are supported; nonempty WAL sidecars are rejected.",
+            "Finalized SQLite .db3 and ROS MCAP bags are supported; nonempty WAL sidecars are rejected.",
             "Missing/extra SHA256 samples are limited to 20 distinct hashes per topic and type; counts are complete.",
         ],
     }
