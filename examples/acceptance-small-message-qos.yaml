@@ -1,0 +1,253 @@
+# Acceptance fixture for this bag only: nonempty topics with maximum serialized size <=64 KiB.
+# Observed maximum is 820 bytes; total payload history bound is printed in the acceptance report.
+# Use on both player and recorder. Large image queues remain adaptive.
+/aiformula_control/game_pad/cmd_vel:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_control/joy_node/joy:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_control/motor_controller/reference_signal:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_perception/lane_line_publisher/lane_lines/center:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_perception/lane_line_publisher/lane_lines/left:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_perception/lane_line_publisher/lane_lines/right:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/gyro_odometry_publisher/odom:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/joint_states:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/rear_potentiometer/yaw:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/gnss:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/imu_uncompensated:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/magnetic:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/pose:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/pressure:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/raw/common:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/raw/gps:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/raw/ins:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/temperature:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/time_gps:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/time_pps:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/time_startup:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/time_syncin:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/velocity_body:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vehicle_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/imu/data_raw:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/left/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/left_cam_imu_transform:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/left_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/left_raw/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/left_raw_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/rgb/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/rgb_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/rgb_raw/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/rgb_raw_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/right/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/right_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/right_raw/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/right_raw_gray/camera_info:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/temperature/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/diagnostics:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/filtered_lane_pose:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/filtered_omega_t:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/processed_point_a:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/processed_point_b:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/processed_point_c:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/rosout:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: transient_local
+/tf:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/tf_static:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: transient_local

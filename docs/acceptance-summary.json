@@ -1,0 +1,154 @@
+{
+  "date": "2026-10-15",
+  "source": {
+    "bytes": 21411135488,
+    "sha256": "27e0fd1c6986468cd5afbd988eee78e52cff52935566bb1f87de589db835d604",
+    "messages": 176950,
+    "metadata_topics": 81,
+    "nonempty_topics": 67,
+    "duration_seconds": 122.83308712
+  },
+  "environment": {
+    "os": "Fedora 44 Linux",
+    "ros": "Jazzy",
+    "rmw": "rmw_fastrtps_cpp",
+    "logical_cpus": 12,
+    "python": "3.14.8",
+    "scope": "localhost-only isolated ROS domains; real replay, recorder and resource telemetry; headless Textual Pilot UI"
+  },
+  "runs": [
+    {
+      "name": "baseline_1x",
+      "domain": 219,
+      "rate": 1.0,
+      "source_messages": 176950,
+      "recorded_messages": 177040,
+      "missing_messages": 1,
+      "extra_messages": 91,
+      "integrity_accepted": false,
+      "missing_by_topic": {
+        "/aiformula_sensing/zed_node/imu/data_raw": 1
+      },
+      "extra_by_topic": {
+        "/rosout": 91
+      },
+      "selected_topics": 82,
+      "recorder_state": "finished",
+      "recorder_returncode": 0,
+      "cleanup_errors": [],
+      "pressure_checks": null,
+      "recorder_qos_sha256": null,
+      "player_qos_sha256": null,
+      "cpu_peak_percent": 24.4,
+      "ram_peak_percent": 60.7,
+      "gpu_peak_percent": 100.0
+    },
+    {
+      "name": "baseline_qos_1x",
+      "domain": 219,
+      "rate": 1.0,
+      "source_messages": 176950,
+      "recorded_messages": 177040,
+      "missing_messages": 7,
+      "extra_messages": 97,
+      "integrity_accepted": false,
+      "missing_by_topic": {
+        "/aiformula_sensing/gyro_odometry_publisher/odom": 1,
+        "/aiformula_sensing/rear_potentiometer/yaw": 1,
+        "/aiformula_sensing/zed_node/imu": 1,
+        "/aiformula_sensing/zed_node/imu/data_raw": 1,
+        "/aiformula_sensing/zed_node/left_cam_imu_transform": 2,
+        "/tf": 1
+      },
+      "extra_by_topic": {
+        "/rosout": 97
+      },
+      "selected_topics": 82,
+      "recorder_state": "finished",
+      "recorder_returncode": 0,
+      "cleanup_errors": [],
+      "pressure_checks": null,
+      "recorder_qos_sha256": "b08ad32183c3f647f0826f156febdbd0f4c17856c9a8795f819bee429249039b",
+      "player_qos_sha256": null,
+      "cpu_peak_percent": 27.8,
+      "ram_peak_percent": 50.2,
+      "gpu_peak_percent": 0.0
+    },
+    {
+      "name": "baseline_buffered_1x",
+      "domain": 219,
+      "rate": 1.0,
+      "source_messages": 176950,
+      "recorded_messages": 177143,
+      "missing_messages": 0,
+      "extra_messages": 193,
+      "integrity_accepted": true,
+      "missing_by_topic": {},
+      "extra_by_topic": {
+        "/rosout": 193
+      },
+      "selected_topics": 82,
+      "recorder_state": "finished",
+      "recorder_returncode": 0,
+      "cleanup_errors": [],
+      "pressure_checks": null,
+      "recorder_qos_sha256": "063980e6e59693252fb14cb7b408c84989fbfd720525563605f04056728918eb",
+      "player_qos_sha256": "063980e6e59693252fb14cb7b408c84989fbfd720525563605f04056728918eb",
+      "cpu_peak_percent": 21.5,
+      "ram_peak_percent": 48.9,
+      "gpu_peak_percent": 0.0
+    },
+    {
+      "name": "pressure_buffered_1x",
+      "domain": 220,
+      "rate": 1.0,
+      "source_messages": 176950,
+      "recorded_messages": 176953,
+      "missing_messages": 190,
+      "extra_messages": 193,
+      "integrity_accepted": false,
+      "missing_by_topic": {
+        "/aiformula_perception/pub_mask_image": 7,
+        "/aiformula_perception/road_detector/mask_image": 2,
+        "/aiformula_sensing/vehicle_info": 6,
+        "/aiformula_sensing/zed_node/imu": 2,
+        "/aiformula_sensing/zed_node/imu/data_raw": 5,
+        "/aiformula_sensing/zed_node/left_cam_imu_transform": 3,
+        "/aiformula_sensing/zed_node/left_gray/image_rect_gray": 16,
+        "/aiformula_sensing/zed_node/left_image/undistorted": 6,
+        "/aiformula_sensing/zed_node/left_raw/image_raw_color": 22,
+        "/aiformula_sensing/zed_node/left_raw_gray/image_raw_gray": 3,
+        "/aiformula_sensing/zed_node/rgb/image_rect_color": 8,
+        "/aiformula_sensing/zed_node/rgb_gray/image_rect_gray": 8,
+        "/aiformula_sensing/zed_node/rgb_raw/image_raw_color": 14,
+        "/aiformula_sensing/zed_node/rgb_raw_gray/image_raw_gray": 8,
+        "/aiformula_sensing/zed_node/right_gray/image_rect_gray": 5,
+        "/aiformula_sensing/zed_node/right_image/undistorted": 9,
+        "/aiformula_sensing/zed_node/right_raw/image_raw_color": 13,
+        "/aiformula_sensing/zed_node/right_raw_gray/image_raw_gray": 1,
+        "/aiformula_sensing/zed_node/stereo/image_rect_color": 16,
+        "/aiformula_sensing/zed_node/stereo_raw/image_raw_color": 13,
+        "/aiformula_visualization/road_detector/annotated_mask_image": 10,
+        "/tf": 13
+      },
+      "extra_by_topic": {
+        "/rosout": 193
+      },
+      "selected_topics": 82,
+      "recorder_state": "finished",
+      "recorder_returncode": 0,
+      "cleanup_errors": [],
+      "pressure_checks": {
+        "during_workload_cpu_alert": true,
+        "post_workload_recovered": true,
+        "pressure_screenshot_verified": true,
+        "recovery_screenshot_verified": true
+      },
+      "recorder_qos_sha256": "063980e6e59693252fb14cb7b408c84989fbfd720525563605f04056728918eb",
+      "player_qos_sha256": "063980e6e59693252fb14cb7b408c84989fbfd720525563605f04056728918eb",
+      "cpu_peak_percent": 100.0,
+      "ram_peak_percent": 49.5,
+      "gpu_peak_percent": 100.0
+    }
+  ]
+}

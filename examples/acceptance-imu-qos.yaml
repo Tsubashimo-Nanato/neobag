@@ -1,0 +1,22 @@
+# Full-bag acceptance fixture; adapt topic names/policies for your own publishers.
+# Keep image/point-cloud queues adaptive to avoid large memory allocations.
+/aiformula_sensing/vectornav/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/vectornav/imu_uncompensated:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/imu:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile
+/aiformula_sensing/zed_node/imu/data_raw:
+  history: keep_last
+  depth: 1000
+  reliability: reliable
+  durability: volatile

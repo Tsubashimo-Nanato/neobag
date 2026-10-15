@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+*.pyc
+bags/
+.qa/
+.playwright-cli/
+build/
+evidence/
+*.db3
+*.db3-shm
+*.db3-wal
+*.mcap
+*.bag
