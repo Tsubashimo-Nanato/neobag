@@ -330,18 +330,40 @@ async def test_discovery_failure_blocks_recording_until_successful_refresh(bundl
     app, discovery, recorder, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
+
+        async def refresh_once():
+            button = app.query_one("#refresh", Button)
+
+            async def released():
+                # Textual ignores mouse clicks until the prior active effect
+                # ends. Waiting for workers alone does not wait for that timer.
+                while button.has_class("-active"):
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(released(), timeout=3)
+            previous_calls = discovery.calls
+            assert await pilot.click("#refresh", offset=(2, 1))
+
+            async def scan_completed():
+                # The click may have queued its worker after settle() took its
+                # worker snapshot; wait for this exact scan and its UI result.
+                while discovery.calls <= previous_calls or app._scanning:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(scan_completed(), timeout=3)
+            await settle(app, pilot)
+            assert discovery.calls == previous_calls + 1
+
         assert await click_button(app, pilot, "#all")
         discovery.error = RuntimeError("ROS 2 discovery unavailable; source setup.bash")
-        assert await pilot.click("#refresh", offset=(2, 1))
-        await settle(app, pilot)
+        await refresh_once()
         assert app.query_one("#start", Button).disabled
         assert "source setup.bash" in str(app.query_one("#summary", Static).content)
         await pilot.press("ctrl+s")
         await settle(app, pilot)
         assert recorder.start_calls == []
         discovery.error = None
-        assert await pilot.click("#refresh", offset=(2, 1))
-        await settle(app, pilot)
+        await refresh_once()
         assert not app.query_one("#start", Button).disabled
 
 
