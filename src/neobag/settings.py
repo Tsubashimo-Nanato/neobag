@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -33,8 +34,9 @@ def package_available(command, package: str) -> bool:
 
 def cache_bytes(override_mib: int | None = None) -> int:
     if override_mib is not None:
-        if not isinstance(override_mib, int) or isinstance(override_mib, bool) or not 16 <= override_mib <= 8192:
-            raise ValueError("Cache must be between 16 and 8192 MiB")
+        if (not isinstance(override_mib, int) or isinstance(override_mib, bool)
+                or (override_mib != 0 and not 16 <= override_mib <= 8192)):
+            raise ValueError("Cache must be 0 (disabled) or between 16 and 8192 MiB")
         return override_mib * 2**20
     try:
         memory = psutil.virtual_memory()
@@ -45,9 +47,37 @@ def cache_bytes(override_mib: int | None = None) -> int:
         return 128 * 2**20
 
 
+def supports_byte_cache(command) -> bool:
+    """Probe the invoked CLI: Foxy's cache is a message count, not bytes.
+
+    Unknown implementations use synchronous writes. Inspect only this option's
+    description; an unrelated max-bag-size option also mentions bytes.
+    """
+    try:
+        result = subprocess.run([*command, "bag", "record", "--help"],
+                                capture_output=True, text=True, timeout=8, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode:
+        return False
+    lines = result.stdout.splitlines()
+    for index, line in enumerate(lines):
+        if not re.match(r"^\s*--max-cache-size(?:\s|=|$)", line):
+            continue
+        description = [line]
+        for following in lines[index + 1:]:
+            if re.match(r"^\s*-\S", following):
+                break
+            description.append(following)
+        return bool(re.search(r"\bbytes?\b", " ".join(description), re.IGNORECASE))
+    return False
+
+
 def resolve_settings(command, storage: str, rmw: str, cache_mib: int | None):
     if rmw not in ("auto", "inherit", "cyclonedds", "fastrtps"):
         raise ValueError("Invalid recorder RMW choice")
+    requested_cache = cache_bytes(cache_mib)
+    cache = requested_cache if requested_cache and supports_byte_cache(command) else 0
     env = os.environ.copy()
     probes = []
     if storage == "auto":
@@ -67,7 +97,7 @@ def resolve_settings(command, storage: str, rmw: str, cache_mib: int | None):
         env["RMW_IMPLEMENTATION"] = "rmw_cyclonedds_cpp"
     if (rmw == "cyclonedds" or (choose_cyclone and available["rmw_cyclonedds_cpp"])) and not env.get("CYCLONEDDS_URI"):
         env["CYCLONEDDS_URI"] = CYCLONE_RECEIVER_CONFIG
-    return storage, env, cache_bytes(cache_mib)
+    return storage, env, cache
 
 
 def buffered_qos(command, topics: list[str], environment: dict) -> dict:

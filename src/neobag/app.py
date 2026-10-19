@@ -203,7 +203,7 @@ class NeoBagApp(App):
         with Horizontal(id="record-actions"):
             yield Button("● Record", id="start")
             yield Button("■ Stop", id="stop", disabled=True)
-            yield Button("Refresh", id="refresh")
+            yield Button("Refresh", id="refresh", tooltip="Rescan ROS topics manually · Ctrl+R")
             yield Static("IDLE", id="record-state", markup=False)
         yield Static(self.notice, id="summary", markup=False)
         yield Footer()
@@ -213,9 +213,9 @@ class NeoBagApp(App):
         self.query_one("#parent").border_title = "Output directory"
         self.query_one("#name").border_title = "Bag name"
         self.query_one("#topics").border_title = "Live graph · 0 topics"
+        # Discover once on startup; subsequent scans use Refresh / Ctrl+R.
         self.run_worker(self.refresh_topics())
         self.run_worker(self.sample_resources())
-        self.set_interval(5, self.refresh_topics)
         self.set_interval(1, self.sample_resources)
         self.set_interval(0.25, self.poll_recorder)
         # Terminal disconnects and TERM must also request rosbag finalization.

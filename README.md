@@ -40,7 +40,7 @@ neobag --doctor
 
 ## 操作
 
-- 话题列表每 5 秒刷新，包含隐藏话题。显示 ROS 图中的话题与消息类型；只有订阅者的空话题也可能出现，这不等于正在收到消息。
+- 启动时扫描一次话题，之后点击 Refresh 或按 Ctrl+R 手动刷新，包含隐藏话题。资源占用仍每秒更新。显示 ROS 图中的话题与消息类型；只有订阅者的空话题也可能出现，这不等于正在收到消息。
 - 点击行或按空格勾选；Tab 切换控件。搜索支持话题名和消息类型。
 - 类别依据消息类型和名称识别：Camera、Point clouds、Laser、IMU、Odometry、Transforms、Navigation、Control、Diagnostics、Other。
 - **All / None** 操作所有已发现话题，包含被搜索条件隐藏的话题。
@@ -72,6 +72,8 @@ CPU、RAM、GPU 和输出盘可用空间约每秒更新。CPU 首次采样显示
 
 Stop 只向本次启动的录制进程组发送 SIGINT，等待 rosbag 写完数据和 `metadata.yaml`；超过 30 秒仍未结束时提示继续等待，不强杀录制器。ROS 报错可从 Ctrl+L 日志查看。突然断电、SIGKILL、驱动或文件系统故障仍可能使 bag 不完整。
 
+SQLite3 保存后在后台只读核对数据库实际消息数与 metadata 声明的总数和话题计数，完成前保持 Stopping；不一致时报告失败。Foxy 的 ros2cli 在正常响应本次 Stop 后可能返回 2，只有正常停止流程且 SQLite 校验通过才显示 Saved；无请求的异常退出仍为失败。这些检查不证明发布端所有消息均已收到。
+
 ## 从源码安装
 
 要求 Python 3.10+、pip/venv、已安装 `ros2 bag` 的 ROS 2 环境，安装依赖时需要联网。
@@ -95,7 +97,7 @@ neobag 调用当前 PATH 中的 `ros2`，继承当前 ROS domain、网络和工�
 - **存储**：自动优先使用已安装的 MCAP，保留普通 MCAP 的分块、索引与 CRC；不使用关闭校验的 fastwrite 预设。未安装插件则使用 SQLite3。
 - **接收实现**：未显式设置 `RMW_IMPLEMENTATION` 或 Fast DDS 配置文件时，Linux 上优先使用已安装的 Cyclone DDS。已有设置优先；插件不存在则继承 ROS 默认实现。`--recorder-rmw inherit` 可始终继承，或明确指定 `cyclonedds` / `fastrtps`。
 - **接收调度**：neobag 自动选择 Cyclone DDS 且没有用户 `CYCLONEDDS_URI` 时，为自己的进程启用异步交付、最多 1024 条交付队列、请求 4 MiB socket 接收缓冲，并缩短 ACK/NACK 重复等待至 1 ms。操作系统仍可限制 socket 大小，不修改 sysctl；用户已有 Cyclone 配置保持原样。交付队列按消息条数限制，大消息可能额外占用内存。
-- **写入缓存**：按总内存和当前可用内存计算，最高每个缓冲区 512 MiB。ROS 使用双缓冲，默认总上限为 1 GiB，且不超过当前可用内存的一半或总内存的八分之一。可通过 `--cache-mib 128` 明确设置每个缓冲区大小。
+- **写入缓存**：开始前检查实际 `ros2 bag record --help` 中缓存选项的单位。明确使用字节的实现按总内存和当前可用内存计算，最高每个缓冲区 512 MiB；现代 ROS 双缓冲默认总上限为 1 GiB，且不超过当前可用内存的一半或总内存的八分之一。`--cache-mib 128` 可明确设置大小，`--cache-mib 0` 禁用缓存。Foxy 0.3.11 按消息条数解释该选项，不能传 MiB 数值：本程序对此以及无法确认单位的实现使用 `--max-cache-size 0` 直接写盘，即使指定了非零 MiB 也不会启用旧缓存。
 - **小消息队列**：开始前使用 ROS 自身的 Python 检查已选话题的发布者。对 IMU、里程计、CAN、VectorNav、TF、常见标量和控制消息等使用 depth 1000；按实际发布者匹配 reliability / durability。混合可靠性使用 best-effort，只有全部 transient-local 发布者才请求 transient-local。图像、点云、地图和未知类型保留 ROS 自适应策略，避免深队列占用大量内存。
 - 自动 QoS 文件保留在 bag 内的 `neobag-receiver-qos.yaml`。探测不支持当前 ROS 包装方式或失败时，会在界面明确警告并回退到 ROS 自适应 QoS。`--native-qos` 可禁用小消息缓冲；显式 `--qos-overrides file.yaml` 优先于自动策略。
 

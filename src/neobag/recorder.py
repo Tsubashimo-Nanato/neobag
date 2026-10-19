@@ -8,6 +8,7 @@ metadata; it does not certify message completeness or recording frequency.
 from __future__ import annotations
 
 from collections import deque
+from concurrent.futures import Future
 import math
 import json
 import os
@@ -21,6 +22,7 @@ import time
 from typing import IO, Sequence
 
 from .settings import resolve_settings, buffered_qos, CYCLONE_RECEIVER_CONFIG
+from .finalization import validate_sqlite_metadata
 
 
 class RecorderError(RuntimeError):
@@ -81,6 +83,7 @@ class Recorder:
         self.returncode: int | None = None
         self.started_at: float | None = None
         self.transport_lost = 0
+        self._validation_future: Future | None = None
 
     @property
     def pid(self) -> int | None:
@@ -91,6 +94,9 @@ class Recorder:
         """Include owned descendants if an environment launcher exits first."""
         if self._process is None or self._finalized:
             return False
+        # A requested stop is not complete until poll() validates saved output.
+        if self._stop_requested_at is not None:
+            return True
         if self._process.poll() is None:
             return True
         return self._group_alive()
@@ -163,7 +169,8 @@ class Recorder:
 
         storage, environment, cache = resolve_settings(self._command, storage, self.rmw, self.cache_mib)
         self.resolved_storage = storage
-        self.settings_notice = f"{storage} · cache {cache / 2**20:.0f} MiB × 2 · {environment.get('RMW_IMPLEMENTATION', 'inherited RMW')}"
+        cache_notice = f"cache {cache / 2**20:.0f} MiB × 2" if cache else "cache disabled (direct writes)"
+        self.settings_notice = f"{storage} · {cache_notice} · {environment.get('RMW_IMPLEMENTATION', 'inherited RMW')}"
         if environment.get("CYCLONEDDS_URI") == CYCLONE_RECEIVER_CONFIG:
             self.settings_notice += " (async RX)"
         self.configuration_warning = ""
@@ -193,6 +200,7 @@ class Recorder:
         self._process = None
         self._logs = deque(maxlen=self._max_log_lines)
         self.transport_lost = 0
+        self._validation_future = None
         arguments = [
             *self._command, "bag", "record", "--storage", storage,
             "--output", str(output), "--include-hidden-topics",
@@ -311,6 +319,37 @@ class Recorder:
                 )
             return self.state
 
+        metadata = self.output_path / "metadata.yaml" if self.output_path else None
+        try:
+            has_metadata = bool(metadata and metadata.is_file() and metadata.stat().st_size > 0)
+        except OSError:
+            has_metadata = False
+        requested_stop = self._stop_requested_at is not None
+        # Foxy's ros2cli translates KeyboardInterrupt to signal.SIGINT == 2.
+        # Accept that code only for our own stop and validated SQLite output.
+        acceptable_exit = self.returncode == 0 or (
+            requested_stop and self.returncode in (-signal.SIGINT, 130, int(signal.SIGINT))
+        )
+        validation_error = None
+        if acceptable_exit and has_metadata and requested_stop and (
+                self.resolved_storage == "sqlite3" or self.returncode == int(signal.SIGINT)):
+            if self._validation_future is None:
+                self._validation_future = Future()
+                future = self._validation_future
+                output = self.output_path
+
+                def validate():
+                    try:
+                        future.set_result(validate_sqlite_metadata(output))
+                    except Exception as exc:
+                        future.set_result(f"Saved SQLite validation failed: {exc}")
+
+                threading.Thread(target=validate, name="neobag-finalize", daemon=True).start()
+            if not self._validation_future.done():
+                self.state = "stopping"
+                return self.state
+            validation_error = self._validation_future.result()
+
         self._finalized = True
         self._close_pty()
         if self._generated_qos is not None and self.output_path and self.output_path.is_dir():
@@ -321,15 +360,7 @@ class Recorder:
                 with self._log_lock:
                     self._logs.append(f"Could not retain receiver QoS settings: {exc}")
         self._cleanup_qos()
-        metadata = self.output_path / "metadata.yaml" if self.output_path else None
-        try:
-            has_metadata = bool(metadata and metadata.is_file() and metadata.stat().st_size > 0)
-        except OSError:
-            has_metadata = False
-        acceptable_exit = self.returncode == 0 or (
-            self._stop_requested_at is not None and self.returncode in (-signal.SIGINT, 130)
-        )
-        if acceptable_exit and has_metadata and self._stop_requested_at is not None:
+        if acceptable_exit and has_metadata and requested_stop and validation_error is None:
             self.state = "finished"
             self.error = None
         else:
@@ -341,6 +372,8 @@ class Recorder:
                 reasons.append(f"exit code {self.returncode}")
             if not has_metadata:
                 reasons.append("metadata.yaml is missing or empty; bag finalization is unverified")
+            if validation_error:
+                reasons.append(validation_error)
             self.error = "; ".join(reasons) + ". Inspect the recorder log and bag output."
         return self.state
 

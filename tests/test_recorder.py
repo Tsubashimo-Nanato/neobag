@@ -16,7 +16,7 @@ from neobag.recorder import Recorder, RecorderError
 
 
 FAKE_ROS2 = r'''
-import json, os, signal, sys, time
+import json, os, signal, sqlite3, sys, time
 from pathlib import Path
 mode = sys.argv[1]
 arguments = sys.argv[2:]
@@ -24,11 +24,20 @@ output = Path(arguments[arguments.index("--output") + 1])
 output.mkdir()
 (output / "arguments.json").write_text(json.dumps(arguments))
 (output / "stdin_is_tty").write_text(str(sys.stdin.isatty()))
+def saved_metadata():
+    with sqlite3.connect(output / "bag_0.db3") as db:
+        db.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, topic_id INTEGER, timestamp INTEGER, data BLOB)")
+        db.execute("CREATE TABLE topics (id INTEGER PRIMARY KEY, name TEXT, type TEXT, serialization_format TEXT)")
+    count = 3 if mode == "foxy-bad-count" else 0
+    (output / "metadata.yaml").write_text("rosbag2_bagfile_information:\n  version: 4\n  storage_identifier: sqlite3\n  relative_file_paths: [bag_0.db3]\n  message_count: " + str(count) + "\n")
 if mode == "crash":
     print("storage plugin failed", flush=True)
     sys.exit(7)
 if mode == "exit-zero":
     sys.exit(0)
+if mode == "exit-two":
+    saved_metadata()
+    sys.exit(2)
 if mode == "spam":
     print("X" * 120000, flush=True)
     for i in range(2000):
@@ -40,8 +49,8 @@ def stop(sig, frame):
     if mode == "ignore":
         return
     if mode != "missing-metadata":
-        (output / "metadata.yaml").write_text("rosbag2_bagfile_information:\n  version: 5\n")
-    sys.exit(0)
+        saved_metadata()
+    sys.exit(2 if mode.startswith("foxy-") else 0)
 signal.signal(signal.SIGINT, stop)
 if hasattr(signal, "SIGBREAK"):
     signal.signal(signal.SIGBREAK, stop)
@@ -170,14 +179,15 @@ def test_qos_override_is_explicit_and_passed_as_one_argument(tmp_path, fake_ros2
         cleanup(recorder)
 
 
-@pytest.mark.parametrize("mode,expected", [("crash", "exit code 7"), ("exit-zero", "exited unexpectedly")])
+@pytest.mark.parametrize("mode,expected", [("crash", "exit code 7"), ("exit-zero", "exited unexpectedly"), ("exit-two", "exit code 2")])
 def test_unexpected_process_exit_is_failure(tmp_path, fake_ros2, mode, expected):
     recorder = make_recorder(fake_ros2, mode)
     recorder.start(["/tf"], tmp_path, "bag")
     try:
         wait_until(lambda: recorder.poll() == "failed")
         assert expected in recorder.error
-        assert "metadata.yaml" in recorder.error
+        if mode != "exit-two":
+            assert "metadata.yaml" in recorder.error
         assert not recorder.is_active
     finally:
         cleanup(recorder)
@@ -279,3 +289,66 @@ def test_finished_requires_success_even_when_metadata_exists(tmp_path, monkeypat
     monkeypatch.setattr(recorder, "_group_alive", lambda: False)
     assert recorder.poll() == "failed"
     assert "exit code 9" in recorder.error
+
+
+@pytest.mark.skipif(os.name != "posix", reason="ROS process-group SIGINT integration")
+def test_foxy_requested_stop_exit_two_validates_sqlite(tmp_path, fake_ros2):
+    recorder = make_recorder(fake_ros2, "foxy-stop")
+    output = recorder.start(["/tf"], tmp_path, "bag")
+    try:
+        wait_until(lambda: (output / "ready").exists())
+        recorder.request_stop()
+        wait_until(lambda: recorder.poll() == "finished")
+        assert recorder.returncode == 2
+        assert recorder.error is None
+        assert not recorder.is_active
+        args = json.loads((output / "arguments.json").read_text())
+        assert args[args.index("--max-cache-size") + 1] == "0"
+        assert "cache disabled" in recorder.settings_notice
+    finally:
+        cleanup(recorder)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="ROS process-group SIGINT integration")
+def test_foxy_metadata_count_with_empty_database_is_not_saved(tmp_path, fake_ros2):
+    recorder = make_recorder(fake_ros2, "foxy-bad-count")
+    output = recorder.start(["/camera/image"], tmp_path, "bag")
+    try:
+        wait_until(lambda: (output / "ready").exists())
+        recorder.request_stop()
+        wait_until(lambda: recorder.poll() == "failed")
+        assert recorder.returncode == 2
+        assert "count" in recorder.error.lower()
+    finally:
+        cleanup(recorder)
+
+
+def test_sqlite_validation_does_not_block_poll_or_allow_new_recording(tmp_path, monkeypatch):
+    import threading
+    from neobag import recorder as module
+    entered, release = threading.Event(), threading.Event()
+    def validate(path):
+        entered.set()
+        assert release.wait(timeout=5)
+        return None
+    monkeypatch.setattr(module, "validate_sqlite_metadata", validate)
+    recorder = Recorder()
+    recorder._process = Mock()
+    recorder._process.poll.return_value = 2
+    recorder._stop_requested_at = time.monotonic()
+    recorder.output_path = tmp_path
+    recorder.resolved_storage = "sqlite3"
+    (tmp_path / "metadata.yaml").write_text("finalized")
+    monkeypatch.setattr(recorder, "_group_alive", lambda: False)
+    try:
+        start = time.monotonic()
+        assert recorder.poll() == "stopping"
+        assert time.monotonic() - start < 0.5
+        assert entered.wait(timeout=2)
+        assert recorder.is_active
+        with pytest.raises(RecorderError, match="already active"):
+            recorder.start(["/tf"], tmp_path, "another")
+    finally:
+        release.set()
+        wait_until(lambda: recorder.poll() == "finished")
+    assert not recorder.is_active
