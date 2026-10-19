@@ -1,0 +1,22 @@
+{
+  "version": "0.2.1",
+  "implementation_commit": "f38cfffe4e771afb5250dcfaef27411832fa2a87",
+  "installed_entry": "/home/control/.local/share/neobag/releases/r-8dcf15a3588e48dfba59d4e63d7008f9/venv/bin/neobag",
+  "previous_release_preserved": "/home/control/.local/share/neobag/releases/r-d05ac2d1509c494cb2f5b262ec51d49d",
+  "rollback_launcher": "/home/control/aiformula_runtime/neobag_foxy_fix_20261019/neobag.launcher.before",
+  "installed_module_sha256": {
+    "__init__.py": "61d03eda1457a07b46dce671ac6de0d7a5cbca91dab68eeff9323f0d07a8e791",
+    "settings.py": "330e501154bc13162eeaf3bedb6d2ad1b503dd5b69eb5ab7dc7a8d63fc9a7ab7",
+    "topics.py": "f5725a71bb65f3a84c0ab67c93448d37e58066aed1c3da1a4e0cf5a5b3d6607a",
+    "app.py": "f7bfe21ceaea9db88380794e64f8409a74f9947a8204372e90020625c4b526cd",
+    "finalization.py": "7c8ef515d5d1b9d93e39b1820e2021503892977f82ddbf4b4447b1d2b28c7bf4",
+    "profiles.py": "5c21673e1bd99d399b380c9b54026b1773f75711855e3bc3f117e056e0c1ab82",
+    "resources.py": "c4acc1f144d85e59eb136a0f60f719c630d0fc2a77b347c04502ddb9a7b76fd8",
+    "recorder.py": "eca5ebc5de864cfcd9c379ad372461225e2df1c94e3c6bb6ef84f8df2e97d7ad",
+    "ros_probe.py": "90d7728b598104d43d7eb0691b90de275f885b444caba44d367810388cf735d6",
+    "__main__.py": "7dff687e50355d6c4c426fa29e103bdef10765ac20094975ccbd7e37f03c31ce"
+  },
+  "system_python_unchanged": "3.8.10",
+  "velocity_commands_published_by_test": false,
+  "recording_process_exited": true
+}

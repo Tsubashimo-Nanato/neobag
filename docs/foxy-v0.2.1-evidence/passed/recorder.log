@@ -1,0 +1,8 @@
+Recorder settings: sqlite3 · cache disabled (direct writes) · inherited RMW · buffered QoS: 0 topics
+Recording to /media/control/Extreme SSD/rosbag/neobag_0_2_1_20261019_145045
+[INFO] [1792389073.184388133] [rosbag2_storage]: Opened database '/media/control/Extreme SSD/rosbag/neobag_0_2_1_20261019_145045/neobag_0_2_1_20261019_145045_0.db3' for READ_WRITE.
+[INFO] [1792389073.202532972] [rosbag2_transport]: Listening for topics...
+[INFO] [1792389073.505261584] [rosbag2_transport]: Subscribed to topic '/aiformula_control/game_pad/cmd_vel'
+[INFO] [1792389075.214906445] [rosbag2_transport]: Subscribed to topic '/aiformula_sensing/zed_node/left_image/undistorted'
+[INFO] [1792389075.214967918] [rosbag2_transport]: All requested topics are subscribed. Stopping discovery...
+[INFO] [1792389102.756680124] [rclcpp]: signal_handler(signal_value=2)
