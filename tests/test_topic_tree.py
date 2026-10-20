@@ -29,6 +29,27 @@ def tray_names(app):
     return {tray.get_option_at_index(i).id for i in range(tray.option_count)}
 
 
+async def test_first_topics_after_an_empty_scan_use_the_initial_fold_state(bundle):
+    app, discovery, _, _ = bundle
+    discovery.topics = []
+    async with app.run_test(size=(120, 36)) as pilot:
+        await settle(app, pilot)
+        tree = app.query_one("#topics", TopicTree)
+        assert not tree.nodes
+        discovery.topics = SENSORS
+        await app.refresh_topics()
+        await pilot.pause()
+        assert tree.nodes["namespace:/aiformula_sensing"].is_expanded
+        namespace = tree.nodes["namespace:/aiformula_sensing/zed_node"]
+        assert not namespace.is_expanded
+        assert namespace.line >= 0
+        tree.move_cursor(namespace)
+        tree.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        assert namespace.is_expanded
+
+
 async def test_folding_and_namespace_selection_are_separate_actions(bundle):
     app, discovery, _, _ = bundle
     discovery.topics = SENSORS

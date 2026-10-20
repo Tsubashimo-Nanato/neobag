@@ -152,9 +152,12 @@ class TopicTree(Tree[Entry]):
         anchor = self.cursor_node.data.key if self.cursor_node and self.cursor_node.data else None
         previous_scroll = self.scroll_y
         same_view = view_key == self._view_key
-        if self._view_key == ("", "all"):
+        had_topics = bool(self._topics)
+        # Startup filter events can render an empty tree before discovery
+        # finishes. That is not a user's decision to collapse every namespace.
+        if self._view_key == ("", "all") and had_topics:
             self._normal_expanded = expanded
-        if same_view:
+        if same_view and had_topics:
             restore_expanded = expanded
         elif view_key == ("", "all"):
             restore_expanded = self._normal_expanded
