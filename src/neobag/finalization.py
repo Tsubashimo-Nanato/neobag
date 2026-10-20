@@ -81,7 +81,7 @@ def validate_sqlite_metadata(output: Path) -> str | None:
             return "metadata.yaml contains an invalid database path"
         path = Path(relative)
         windows_path = PureWindowsPath(relative)
-        if path.is_absolute() or windows_path.drive or ".." in path.parts or ".." in windows_path.parts:
+        if path.anchor or windows_path.anchor or ".." in path.parts or ".." in windows_path.parts:
             return f"Unsafe database path in metadata.yaml: {relative}"
         try:
             database = (root / path).resolve(strict=True)

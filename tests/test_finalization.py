@@ -1,6 +1,7 @@
 """Verify ambiguous legacy SIGINT stops using real read-only SQLite bags."""
 
 from pathlib import Path
+import os
 import sqlite3
 
 import pytest
@@ -58,10 +59,12 @@ def test_split_bag_and_per_topic_counts_include_silent_topics(tmp_path):
 
 
 def test_uri_significant_characters_in_output_and_database_paths(tmp_path):
-    output = tmp_path / "bag #with ?spaces"
+    # '#' and spaces need URI escaping on every OS; '?' is POSIX-only.
+    question = "?" if os.name != "nt" else ""
+    output = tmp_path / f"bag #with {question}spaces"
     output.mkdir()
-    make_database(output / "part #1?.db3")
-    write_metadata(output, relative_file_paths=["part #1?.db3"])
+    make_database(output / f"part #1{question}.db3")
+    write_metadata(output, relative_file_paths=[f"part #1{question}.db3"])
     assert validate_sqlite_metadata(output) is None
 
 
@@ -108,7 +111,7 @@ def test_symlink_database_escape_is_rejected(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
     make_database(tmp_path / "outside.db3")
-    (output / "bag_0.db3").symlink_to(tmp_path / "outside.db3")
+    make_symlink(output / "bag_0.db3", tmp_path / "outside.db3")
     write_metadata(output)
     assert "outside" in validate_sqlite_metadata(output)
 
@@ -117,15 +120,24 @@ def test_symlink_metadata_escape_is_rejected(tmp_path):
     output = tmp_path / "output"
     output.mkdir()
     write_metadata(tmp_path)
-    (output / "metadata.yaml").symlink_to(tmp_path / "metadata.yaml")
+    make_symlink(output / "metadata.yaml", tmp_path / "metadata.yaml")
     assert "outside" in validate_sqlite_metadata(output)
 
 
 def test_duplicate_database_alias_is_rejected(tmp_path):
     make_database(tmp_path / "bag_0.db3")
-    (tmp_path / "alias.db3").symlink_to(tmp_path / "bag_0.db3")
+    make_symlink(tmp_path / "alias.db3", tmp_path / "bag_0.db3")
     write_metadata(tmp_path, relative_file_paths=["bag_0.db3", "alias.db3"], message_count=4)
     assert "repeats" in validate_sqlite_metadata(tmp_path)
+
+
+def make_symlink(link, target):
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if os.name == "nt" and exc.winerror == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
 
 
 def test_missing_database_is_not_created(tmp_path):

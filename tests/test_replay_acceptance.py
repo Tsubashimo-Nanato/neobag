@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import importlib.util
+import asyncio
 from dataclasses import replace
+from itertools import count
 from pathlib import Path
 import sys
-import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -218,10 +220,26 @@ def test_svg_evidence_uses_only_visible_text(acceptance_module, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_capture_screenshots_follow_measured_workload_and_recovery(acceptance_module, tmp_path):
+async def test_capture_screenshots_follow_measured_workload_and_recovery(acceptance_module, tmp_path, monkeypatch):
+    # Model distinct telemetry intervals without depending on Windows' coarse
+    # GetTickCount64 clock on older Python versions. Keep the policy strict.
+    clock = SimpleNamespace(monotonic=count(100.0).__next__)
+    monkeypatch.setattr(acceptance_module, "time", clock)
+    pressure_captured = asyncio.Event()
+    recovery_captured = asyncio.Event()
+
     class ManualCapture(acceptance_module.CaptureApp):
-        def on_mount(self):
-            pass  # No ROS discovery, timers, monitor reads, or workloads in this test.
+        def on_mount(self, event):
+            # Textual dispatches inherited mount handlers too unless prevented.
+            # Keep real ROS scans, monitor reads, and timers out of this test.
+            event.prevent_default()
+
+        def _capture_pressure_view(self, sample, recovered):
+            super()._capture_pressure_view(sample, recovered)
+            if recovered and self.pressure_cleared:
+                recovery_captured.set()
+            elif not recovered and self.pressure_shown:
+                pressure_captured.set()
 
     app = ManualCapture(tmp_path, output_parent=tmp_path, bag_name="test")
     high = ResourceSnapshot(cpu_percent=96, ram_percent=30, ram_used_bytes=3 * 2**30,
@@ -229,30 +247,34 @@ async def test_capture_screenshots_follow_measured_workload_and_recovery(accepta
                             disk_free_bytes=50 * 2**30, disk_percent=40, warnings=(CPU_WARNING,))
     try:
         async with app.run_test(size=(140, 42)) as pilot:
+            assert not app.samples
             for _ in range(3):
                 app.show_resources(high)
             await pilot.pause()
             assert not app.pressure_shown
             assert not (tmp_path / "pressure.svg").exists()
-            app.pressure_start = time.monotonic()
+            app.pressure_start = clock.monotonic()
             for _ in range(3):
                 app.show_resources(high)
             await pilot.pause()
+            await asyncio.wait_for(pressure_captured.wait(), timeout=3)
             assert app.pressure_shown
             assert "CPU pressure" in acceptance_module.screenshot_text(tmp_path / "pressure.svg")
             app.show_resources(replace(high, cpu_percent=20, warnings=()))
             await pilot.pause()
             assert not app.pressure_cleared  # Worker interval has not ended.
-            app.pressure_end = time.monotonic()
+            app.pressure_end = clock.monotonic()
             app.show_resources(replace(high, cpu_percent=None, warnings=()))
             await pilot.pause()
             assert not app.pressure_cleared  # Missing telemetry is not recovery.
             app.show_resources(replace(high, cpu_percent=20, warnings=()))
             await pilot.pause()
+            await asyncio.wait_for(recovery_captured.wait(), timeout=3)
             assert app.pressure_cleared
             assert "CPU pressure" not in acceptance_module.screenshot_text(tmp_path / "recovered.svg")
             assert app.pressure_start <= app.pressure_capture_monotonic <= app.pressure_end
             assert app.recovery_capture_monotonic > app.pressure_end
+            assert len(app.samples) == 9
             assert all(acceptance_module.evaluate_pressure(app.samples, app.pressure_start, app.pressure_end).values())
     finally:
         app.finish_cleanup()

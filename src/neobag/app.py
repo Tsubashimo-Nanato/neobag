@@ -10,16 +10,17 @@ import os
 import signal
 import time
 
-from rich.text import Text
 from textual.app import App, ComposeResult
+from textual.events import Resize
 from textual.containers import Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Input, RichLog, Select, SelectionList, Static
+from textual.widgets import Button, Footer, Input, RichLog, Select, Static
 
 from .recorder import Recorder
 from .resources import ResourceMonitor, ResourceSnapshot
 from .topics import Topic, TopicDiscovery
 from .profiles import ProfileStore, resolve_profile
+from .topic_tree import TopicTree, SelectedTopics
 
 
 class ProfileScreen(ModalScreen):
@@ -112,7 +113,15 @@ class NeoBagApp(App):
     #category { width: 30; }
     Button { min-width: 8; margin-right: 1; }
     #selection-actions Button { width: 1fr; }
-    #topics { height: 1fr; min-height: 3; margin: 0 1; border: round #28435d; border-title-color: #a8bed0; }
+    #topic-panes { height: 1fr; min-height: 8; }
+    #topics { width: 2fr; height: 1fr; min-height: 3; margin: 0 1; border: round #28435d; border-title-color: #a8bed0; }
+    #selected-topics { width: 1fr; min-width: 28; height: 1fr; margin-right: 1; border: round #62d4c5; border-title-color: #a8bed0; }
+    #topics > .tree--cursor { background: #243f59; }
+    #topics > .tree--highlight { background: #172c43; }
+    #selected-topics > .option-list--option-highlighted { background: #243f59; }
+    Screen.narrow #topic-panes { layout: vertical; }
+    Screen.narrow #topics { width: 1fr; }
+    Screen.narrow #selected-topics { width: 1fr; height: 4; min-height: 4; margin: 0 1; }
     #topics:disabled { opacity: 1; }
     #parent { width: 2fr; border-title-color: #a8bed0; }
     #name { width: 1fr; border-title-color: #a8bed0; }
@@ -128,6 +137,8 @@ class NeoBagApp(App):
     #profile-actions { height: 3; }
     #profile-status { height: auto; padding-top: 1; }
     Screen.compact #metrics { height: 1; }
+    Screen.compact #warning { height: 1; }
+    Screen.compact #summary { height: 1; }
     Screen.compact .metric { border: none; background: #14233a; }
     Screen.compact #selection-actions { height: 1; }
     Screen.compact #selection-actions Button { height: 1; min-height: 1; border: none; }
@@ -170,7 +181,6 @@ class NeoBagApp(App):
         self._scanning = False
         self._sampling = False
         self._starting = False
-        self._rebuilding = False
         self._quit_after_stop = False
         self._last_state = "idle"
         self._signal_handlers = {}
@@ -191,12 +201,14 @@ class NeoBagApp(App):
             yield Input(placeholder="Search topic or message type", id="search")
             yield Select([("All categories", "all")], value="all", allow_blank=False, id="category")
         with Horizontal(id="selection-actions"):
-            yield Button("All", id="all", tooltip="Select every discovered topic, including filtered topics")
-            yield Button("None", id="none", tooltip="Clear every selection")
-            yield Button("Category +", id="category-all", tooltip="Select every topic in the chosen category")
-            yield Button("Category −", id="category-none", tooltip="Clear the chosen category")
+            yield Button("Select all", id="all", tooltip="Select all current search/category candidates, including collapsed branches; keep other selections")
+            yield Button("Select none", id="none", tooltip="Deselect current search/category candidates; keep other selections")
+            yield Button("Expand", id="expand", tooltip="Expand the current topic tree")
+            yield Button("Collapse", id="collapse", tooltip="Collapse the current topic tree; preserve all selections")
             yield Button("Profiles", id="profiles", tooltip="Save, load and update named topic selections · Ctrl+O")
-        yield SelectionList[str](id="topics")
+        with Horizontal(id="topic-panes"):
+            yield TopicTree(id="topics")
+            yield SelectedTopics(id="selected-topics")
         with Horizontal(id="destination"):
             yield Input(str(self.output_parent), placeholder="Output directory", id="parent")
             yield Input(self.initial_name, placeholder="Bag name", id="name")
@@ -210,9 +222,12 @@ class NeoBagApp(App):
 
     def on_mount(self) -> None:
         self.screen.set_class(self.size.height < 30, "compact")
+        self.screen.set_class(self.size.width < 110, "narrow")
         self.query_one("#parent").border_title = "Output directory"
         self.query_one("#name").border_title = "Bag name"
         self.query_one("#topics").border_title = "Live graph · 0 topics"
+        self.query_one("#selected-topics").border_title = "Selected · 0"
+        self.query_one("#selected-topics").border_subtitle = "Click / Space to remove"
         # Discover once on startup; subsequent scans use Refresh / Ctrl+R.
         self.run_worker(self.refresh_topics())
         self.run_worker(self.sample_resources())
@@ -225,8 +240,11 @@ class NeoBagApp(App):
                 self._signal_handlers[sig] = signal.getsignal(sig)
                 loop.add_signal_handler(sig, lambda: self.call_later(self.action_safe_quit))
 
-    def on_resize(self) -> None:
-        self.screen.set_class(self.size.height < 30, "compact")
+    def on_resize(self, event: Resize) -> None:
+        # Keep the main layout current even when a logs/profiles modal is open.
+        for screen in self.screen_stack:
+            screen.set_class(event.size.height < 30, "compact")
+            screen.set_class(event.size.width < 110, "narrow")
 
     def on_unmount(self) -> None:
         # A worker cancellation does not stop an already running Popen call.
@@ -291,7 +309,7 @@ class NeoBagApp(App):
         query = self.query_one("#search", Input).value.strip().casefold()
         category = self.query_one("#category", Select).value
         return [t for t in self.display_topics() if (category == "all" or t.category == category)
-                and (not query or query in f"{t.name} {' '.join(t.types)}".casefold())]
+                and all(word in f"{t.name} {' '.join(t.types)}".casefold() for word in query.split())]
 
     def display_topics(self) -> list[Topic]:
         live = {topic.name for topic in self.topics}
@@ -300,39 +318,41 @@ class NeoBagApp(App):
         return self.topics + offline
 
     def rebuild_topics(self) -> None:
-        widget = self.query_one("#topics", SelectionList)
+        widget = self.query_one("#topics", TopicTree)
         visible = self.visible_topics()
-        highlighted_name = None
-        if widget.highlighted is not None and widget.highlighted < widget.option_count:
-            highlighted_name = widget.get_option_at_index(widget.highlighted).value
-        previous_scroll = widget.scroll_y
-        self._rebuilding = True
-        with widget.prevent(SelectionList.SelectedChanged):
-            widget.clear_options()
-            for topic in visible:
-                label = Text(topic.name, style="bold")
-                if topic.category == "Offline":
-                    label.append("  [not in latest scan]", style="#ffcd78")
-                label.append(f"  {' | '.join(topic.types)}", style="#7993ab")
-                widget.add_option((label, topic.name, topic.name in self.selected))
-        names = [topic.name for topic in visible]
-        if highlighted_name in names:
-            widget.highlighted = names.index(highlighted_name)
-            widget.scroll_to(y=previous_scroll, animate=False, immediate=True)
-        self._rebuilding = False
-        widget.border_title = f"Live graph · {len(self.topics)} topics · {len(self.selected)} selected"
-        widget.border_subtitle = "Space / click to toggle"
+        view_key = (self.query_one("#search", Input).value.strip().casefold(),
+                    str(self.query_one("#category", Select).value))
+        widget.set_topics(visible, self.selected, view_key)
+        widget.border_title = f"Candidates · {len(visible)} topics"
+        widget.border_subtitle = "Click folder: fold · Space / checkbox: select"
+        self.rebuild_selected()
         self.update_summary()
 
-    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
-        if self._rebuilding or self.recorder.is_active or self._starting:
+    def rebuild_selected(self) -> None:
+        widget = self.query_one("#selected-topics", SelectedTopics)
+        names = sorted(self.selected)
+        known = {topic.name: topic for topic in self.display_topics()}
+        # Filtering never rebuilds this independent list or changes its scroll.
+        widget.set_topics([known[name] for name in names])
+        widget.border_title = f"Selected · {len(names)}"
+        widget.border_subtitle = "Click / Space to remove" if names else "Choose topics from the tree"
+
+    def on_topic_tree_toggle_requested(self, event: TopicTree.ToggleRequested) -> None:
+        if self.recorder.is_active or self._starting:
             return
         self._pending_profile = None
-        visible = {t.name for t in self.visible_topics()}
-        self.selected.difference_update(visible)
-        self.selected.update(event.selection_list.selected)
-        self.query_one("#topics").border_title = f"Live graph · {len(self.topics)} topics · {len(self.selected)} selected"
-        self.update_summary()
+        if event.names <= self.selected:
+            self.selected.difference_update(event.names)
+        else:
+            self.selected.update(event.names)
+        self.rebuild_topics()
+
+    def on_selected_topics_remove_requested(self, event: SelectedTopics.RemoveRequested) -> None:
+        if self.recorder.is_active or self._starting:
+            return
+        self._pending_profile = None
+        self.selected.discard(event.name)
+        self.rebuild_topics()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "search":
@@ -352,18 +372,25 @@ class NeoBagApp(App):
             self.action_refresh()
         elif key == "profiles":
             self.action_profiles()
-        elif key in ("all", "none", "category-all", "category-none"):
+        elif key in ("expand", "collapse"):
+            widget = self.query_one("#topics", TopicTree)
+            if key == "expand":
+                widget.root.expand_all()
+            else:
+                for node in widget.root.children:
+                    node.collapse_all()
+        elif key in ("all", "none"):
             if self.recorder.is_active or self._starting:
                 return
             self._pending_profile = None
-            category = self.query_one("#category", Select).value
-            names = {t.name for t in self.display_topics() if key in ("all", "none") or category == "all" or t.category == category}
-            if key in ("all", "category-all"):
+            names = {topic.name for topic in self.visible_topics()}
+            before = len(self.selected)
+            if key == "all":
                 self.selected.update(names)
             else:
                 self.selected.difference_update(names)
-                if key == "none":
-                    self.selected.clear()
+            changed = abs(len(self.selected) - before)
+            self.notice = f"{'Added' if key == 'all' else 'Removed'} {changed} candidates · other selections kept."
             self.rebuild_topics()
 
     def action_refresh(self) -> None:
@@ -415,7 +442,7 @@ class NeoBagApp(App):
     def lock_controls(self, locked: bool) -> None:
         if not self.is_running:
             return
-        for key in ("search", "category", "all", "none", "category-all", "category-none", "profiles", "topics", "parent", "name", "start", "refresh"):
+        for key in ("all", "none", "profiles", "selected-topics", "parent", "name", "start", "refresh"):
             self.query_one(f"#{key}").disabled = locked
         self.query_one("#stop").disabled = not self.recorder.is_active
 

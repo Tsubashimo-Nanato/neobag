@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neobag"
-version = "0.2.1"
+version = "0.3.0"
 description = "A small live ROS 2 bag recorder for your terminal"
 readme = "README.md"
 license = {file = "LICENSE"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from . import __version__
 
 
 def main() -> None:
@@ -16,7 +17,7 @@ def main() -> None:
     parser.add_argument("--qos-overrides", type=Path, help="Optional rosbag QoS YAML for selected topics (overrides automatic receiver buffering)")
     parser.add_argument("--native-qos", action="store_true", help="Disable automatic buffering for small sensor/control messages")
     parser.add_argument("--doctor", action="store_true", help="Check ROS discovery and local resources, then exit")
-    parser.add_argument("--version", action="version", version="neobag 0.2.1")
+    parser.add_argument("--version", action="version", version=f"neobag {__version__}")
     args = parser.parse_args()
     if args.cache_mib is not None and args.cache_mib != 0 and not 16 <= args.cache_mib <= 8192:
         parser.error("--cache-mib must be 0 (disabled) or between 16 and 8192")
