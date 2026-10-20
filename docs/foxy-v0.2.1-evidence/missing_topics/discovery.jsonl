@@ -1,0 +1,2 @@
+{"event": "start", "scan": 1, "monotonic": 4804.478917577}
+{"event": "finish", "scan": 1, "topics": [{"name": "/parameter_events", "types": ["rcl_interfaces/msg/ParameterEvent"], "category": "Diagnostics"}, {"name": "/rosout", "types": ["rcl_interfaces/msg/Log"], "category": "Diagnostics"}], "monotonic": 4807.445007663}

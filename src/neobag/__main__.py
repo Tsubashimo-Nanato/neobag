@@ -12,14 +12,14 @@ def main() -> None:
     parser.add_argument("--name", default=None, help="Initial bag name")
     parser.add_argument("--storage", choices=("auto", "sqlite3", "mcap"), default="auto", help="Prefer installed MCAP; otherwise SQLite3")
     parser.add_argument("--recorder-rmw", choices=("auto", "inherit", "cyclonedds", "fastrtps"), default="auto", help="Recorder only: auto honors explicit DDS settings, otherwise prefers installed Cyclone DDS")
-    parser.add_argument("--cache-mib", type=int, help="Per-buffer cache size, 16–8192 MiB (two buffers); default adapts to RAM, up to 512 MiB each")
+    parser.add_argument("--cache-mib", type=int, help="0 disables cache; 16–8192 MiB per buffer on byte-cache ROS. Foxy/unknown implementations use direct writes")
     parser.add_argument("--qos-overrides", type=Path, help="Optional rosbag QoS YAML for selected topics (overrides automatic receiver buffering)")
     parser.add_argument("--native-qos", action="store_true", help="Disable automatic buffering for small sensor/control messages")
     parser.add_argument("--doctor", action="store_true", help="Check ROS discovery and local resources, then exit")
-    parser.add_argument("--version", action="version", version="neobag 0.2.0")
+    parser.add_argument("--version", action="version", version="neobag 0.2.1")
     args = parser.parse_args()
-    if args.cache_mib is not None and not 16 <= args.cache_mib <= 8192:
-        parser.error("--cache-mib must be between 16 and 8192")
+    if args.cache_mib is not None and args.cache_mib != 0 and not 16 <= args.cache_mib <= 8192:
+        parser.error("--cache-mib must be 0 (disabled) or between 16 and 8192")
     if args.doctor:
         from dataclasses import asdict
         from .topics import TopicDiscovery

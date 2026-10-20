@@ -240,8 +240,41 @@ async def test_individual_mouse_and_space_selection_survive_filter_and_refresh(b
         assert "1 offline" in str(app.query_one("#summary", Static).content)
 
 
+async def test_topics_only_rescan_on_manual_refresh_while_resources_keep_updating(bundle):
+    app, discovery, _, monitor = bundle
+    async with app.run_test(size=(120, 36)) as pilot:
+        await settle(app, pilot)
+        assert discovery.calls == 1
+        assert await pilot.click("#topics", offset=(2, 1))
+        selection = set(app.selected)
+        samples_before = len(monitor.calls)
+        discovery.topics.append(Topic("/new", ("std_msgs/msg/String",), "Other"))
+
+        # Cross the former five-second discovery interval. Only the separate
+        # one-second resource timer should continue doing background work.
+        await pilot.pause(5.2)
+        await settle(app, pilot)
+        assert discovery.calls == 1
+        assert "/new" not in {topic.name for topic in app.topics}
+        assert len(monitor.calls) > samples_before
+        assert app.selected == selection
+
+        assert await click_button(app, pilot, "#refresh")
+        await settle(app, pilot)
+        assert discovery.calls == 2
+        assert "/new" in {topic.name for topic in app.topics}
+        assert app.selected == selection
+
+        discovery.topics.append(Topic("/another", ("std_msgs/msg/String",), "Other"))
+        await pilot.press("ctrl+r")
+        await settle(app, pilot)
+        assert discovery.calls == 3
+        assert "/another" in {topic.name for topic in app.topics}
+        assert app.selected == selection
+
+
 async def test_start_uses_exact_selection_destination_name_and_storage_then_unlocks_on_finish(bundle, tmp_path):
-    app, _, recorder, _ = bundle
+    app, discovery, recorder, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
         assert await pilot.click("#topics", offset=(2, 1))
@@ -253,12 +286,19 @@ async def test_start_uses_exact_selection_destination_name_and_storage_then_unlo
         assert recorder.start_calls == [(["/front/image_raw"], destination, "lap_2026_10_15", "sqlite3")]
         for selector in ("#topics", "#all", "#none", "#parent", "#name", "#start", "#refresh"):
             assert app.query_one(selector).disabled
+        scans_before = discovery.calls
+        await pilot.press("ctrl+r")
+        await settle(app, pilot)
+        assert discovery.calls == scans_before
         await pilot.press("ctrl+s")
         assert len(recorder.start_calls) == 1
         await pilot.press("ctrl+t")
         assert recorder.stop_calls == 1
         assert recorder.state == "stopping"
         assert "waiting for rosbag to flush" in str(app.query_one("#summary", Static).content)
+        await pilot.press("ctrl+r")
+        await settle(app, pilot)
+        assert discovery.calls == scans_before
         recorder.finish_stop()
         app.poll_recorder()
         await pilot.pause()
@@ -290,18 +330,40 @@ async def test_discovery_failure_blocks_recording_until_successful_refresh(bundl
     app, discovery, recorder, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
+
+        async def refresh_once():
+            button = app.query_one("#refresh", Button)
+
+            async def released():
+                # Textual ignores mouse clicks until the prior active effect
+                # ends. Waiting for workers alone does not wait for that timer.
+                while button.has_class("-active"):
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(released(), timeout=3)
+            previous_calls = discovery.calls
+            assert await pilot.click("#refresh", offset=(2, 1))
+
+            async def scan_completed():
+                # The click may have queued its worker after settle() took its
+                # worker snapshot; wait for this exact scan and its UI result.
+                while discovery.calls <= previous_calls or app._scanning:
+                    await asyncio.sleep(0.01)
+
+            await asyncio.wait_for(scan_completed(), timeout=3)
+            await settle(app, pilot)
+            assert discovery.calls == previous_calls + 1
+
         assert await click_button(app, pilot, "#all")
         discovery.error = RuntimeError("ROS 2 discovery unavailable; source setup.bash")
-        assert await pilot.click("#refresh", offset=(2, 1))
-        await settle(app, pilot)
+        await refresh_once()
         assert app.query_one("#start", Button).disabled
         assert "source setup.bash" in str(app.query_one("#summary", Static).content)
         await pilot.press("ctrl+s")
         await settle(app, pilot)
         assert recorder.start_calls == []
         discovery.error = None
-        assert await pilot.click("#refresh", offset=(2, 1))
-        await settle(app, pilot)
+        await refresh_once()
         assert not app.query_one("#start", Button).disabled
 
 

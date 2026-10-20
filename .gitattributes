@@ -3,3 +3,5 @@
 *.sh text eol=lf
 *.yml text eol=lf
 *.md text eol=lf
+# Retain byte-identical Textual evidence exports, including generated whitespace.
+docs/foxy-v0.2.1-evidence/passed/*.svg -text -whitespace
