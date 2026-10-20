@@ -13,12 +13,13 @@ import threading
 import time
 
 import pytest
-from textual.widgets import Button, Input, Select, SelectionList, Static
+from textual.widgets import Button, Input, Select, Static
 
 from neobag.app import NeoBagApp
 from neobag.resources import ResourceSnapshot
 from neobag.topics import Topic
 from neobag.profiles import ProfileStore
+from neobag.topic_tree import TopicTree, SelectedTopics
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +129,29 @@ async def click_button(app, pilot, selector):
     return await pilot.click(selector, offset=(2, button.region.height // 2))
 
 
+async def choose_topic(app, pilot, name, *, mouse=True):
+    tree = app.query_one("#topics", TopicTree)
+    tree.root.expand_all()
+    await pilot.pause()
+    node = tree.nodes["topic:" + name]
+    tree.move_cursor(node)
+    tree.scroll_to_node(node, animate=False)
+    tree.focus()
+    await pilot.pause()
+    if mouse:
+        depth = 0
+        parent = node.parent
+        while parent is not tree.root:
+            depth += 1
+            parent = parent.parent
+        x = tree.guide_depth * depth + 3
+        y = node.line - int(tree.scroll_y) + 1
+        assert await pilot.click("#topics", offset=(x, y))
+    else:
+        await pilot.press("space")
+    await pilot.pause()
+
+
 def capture(app, name):
     if os.environ.get("NEOBAG_CAPTURE_UI") == "1":
         destination = Path(__file__).resolve().parents[1] / "evidence" / "ui"
@@ -152,13 +176,13 @@ async def test_controls_are_visible_clickable_and_recording_layout_fits(bundle, 
         await settle(app, pilot)
         for selector in (
             "#cpu", "#gpu", "#ram", "#disk", "#search", "#category",
-            "#all", "#none", "#category-all", "#category-none", "#topics",
+            "#all", "#none", "#expand", "#collapse", "#topics", "#selected-topics",
             "#parent", "#name", "#start", "#stop", "#refresh", "#summary",
         ):
             assert_in_view(app, selector)
         if size == (80, 24):
-            assert app.query_one("#topics").region.height >= 7
-            assert app.query_one("#topics").content_size.height >= 5
+            assert app.query_one("#topics").region.height >= 5
+            assert app.query_one("#selected-topics").region.height >= 4
         assert await click_button(app, pilot, "#all")
         assert app.selected == ALL_NAMES
         assert await pilot.click("#parent", offset=(2, 1))
@@ -180,7 +204,7 @@ async def test_controls_are_visible_clickable_and_recording_layout_fits(bundle, 
         app.poll_recorder()
 
 
-async def test_select_all_and_none_apply_to_topics_hidden_by_search_and_category(bundle):
+async def test_select_all_and_none_only_change_current_candidates(bundle):
     app, _, _, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
@@ -189,29 +213,44 @@ async def test_select_all_and_none_apply_to_topics_hidden_by_search_and_category
         await pilot.pause()
         assert [topic.name for topic in app.visible_topics()] == ["/front/image_raw"]
         assert await click_button(app, pilot, "#all")
-        assert app.selected == ALL_NAMES
-        assert app.query_one("#topics", SelectionList).selected == ["/front/image_raw"]
+        assert app.selected == {"/front/image_raw"}
+        app.query_one("#search", Input).value = "rear"
+        await pilot.pause()
+        assert app.selected == {"/front/image_raw"}
+        await pilot.pause(0.3)
+        assert await click_button(app, pilot, "#all")
+        assert app.selected == CAMERA_NAMES
+        assert {option.id for option in app.query_one("#selected-topics", SelectedTopics).options} == CAMERA_NAMES
+        assert await click_button(app, pilot, "#none")
+        assert app.selected == {"/front/image_raw"}
+        app.query_one("#search", Input).value = "no matches"
+        await pilot.pause()
+        assert app.selected == {"/front/image_raw"}
+        app.query_one("#search", Input).value = ""
+        app.query_one("#category", Select).value = "all"
+        await pilot.pause(0.3)
         assert await click_button(app, pilot, "#none")
         assert app.selected == set()
 
 
-async def test_category_select_and_clear_ignore_search_but_preserve_other_categories(bundle):
+async def test_search_and_category_selection_preserve_other_candidates(bundle):
     app, _, _, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
         app.query_one("#category", Select).value = "Camera"
         app.query_one("#search", Input).value = "front"
         await pilot.pause()
-        assert await click_button(app, pilot, "#category-all")
-        assert app.selected == CAMERA_NAMES
+        assert await click_button(app, pilot, "#all")
+        assert app.selected == {"/front/image_raw"}
         app.query_one("#category", Select).value = "IMU"
+        app.query_one("#search", Input).value = ""
         # Textual ignores a second click while the same Button is still active.
         await pilot.pause(0.3)
-        assert await click_button(app, pilot, "#category-all")
-        assert app.selected == CAMERA_NAMES | {"/imu"}
+        assert await click_button(app, pilot, "#all")
+        assert app.selected == {"/front/image_raw", "/imu"}
         app.query_one("#category", Select).value = "Camera"
         await pilot.pause()
-        assert await click_button(app, pilot, "#category-none")
+        assert await click_button(app, pilot, "#none")
         assert app.selected == {"/imu"}
 
 
@@ -219,17 +258,18 @@ async def test_individual_mouse_and_space_selection_survive_filter_and_refresh(b
     app, discovery, _, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
-        assert await pilot.click("#topics", offset=(2, 1))
+        await choose_topic(app, pilot, "/front/image_raw")
         assert app.selected == {"/front/image_raw"}
-        await pilot.press("down", "space")
+        await choose_topic(app, pilot, "/rear/image_raw", mouse=False)
         assert app.selected == CAMERA_NAMES
         app.query_one("#search", Input).value = "imu"
         await pilot.pause()
         assert app.selected == CAMERA_NAMES
-        assert app.query_one("#topics", SelectionList).selected == []
+        assert not app.query_one("#topics", TopicTree).chosen & {t.name for t in app.visible_topics()}
+        assert {option.id for option in app.query_one("#selected-topics", SelectedTopics).options} == CAMERA_NAMES
         app.query_one("#search", Input).value = ""
         await pilot.pause()
-        assert set(app.query_one("#topics", SelectionList).selected) == CAMERA_NAMES
+        assert app.query_one("#topics", TopicTree).chosen == CAMERA_NAMES
         discovery.topics = [topic for topic in SAMPLE_TOPICS if topic.name != "/rear/image_raw"]
         discovery.topics.append(Topic("/new", ("std_msgs/msg/String",), "Other"))
         assert await pilot.click("#refresh", offset=(2, 1))
@@ -245,7 +285,7 @@ async def test_topics_only_rescan_on_manual_refresh_while_resources_keep_updatin
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
         assert discovery.calls == 1
-        assert await pilot.click("#topics", offset=(2, 1))
+        await choose_topic(app, pilot, "/front/image_raw")
         selection = set(app.selected)
         samples_before = len(monitor.calls)
         discovery.topics.append(Topic("/new", ("std_msgs/msg/String",), "Other"))
@@ -277,14 +317,14 @@ async def test_start_uses_exact_selection_destination_name_and_storage_then_unlo
     app, discovery, recorder, _ = bundle
     async with app.run_test(size=(120, 36)) as pilot:
         await settle(app, pilot)
-        assert await pilot.click("#topics", offset=(2, 1))
+        await choose_topic(app, pilot, "/front/image_raw")
         destination = tmp_path / "custom bags"
         app.query_one("#parent", Input).value = str(destination)
         app.query_one("#name", Input).value = "  lap_2026_10_15  "
         await pilot.press("ctrl+s")
         await settle(app, pilot)
         assert recorder.start_calls == [(["/front/image_raw"], destination, "lap_2026_10_15", "sqlite3")]
-        for selector in ("#topics", "#all", "#none", "#parent", "#name", "#start", "#refresh"):
+        for selector in ("#all", "#none", "#parent", "#name", "#start", "#refresh"):
             assert app.query_one(selector).disabled
         scans_before = discovery.calls
         await pilot.press("ctrl+r")
@@ -411,28 +451,28 @@ async def test_refresh_preserves_highlighted_topic_and_scroll_position_in_long_l
     ]
     async with app.run_test(size=(80, 24)) as pilot:
         await settle(app, pilot)
-        widget = app.query_one("#topics", SelectionList)
-        widget.focus()
-        await pilot.press(*(["down"] * 35))
+        widget = app.query_one("#topics", TopicTree)
+        widget.root.expand_all()
         await pilot.pause()
-        before_index = widget.highlighted
-        assert before_index is not None and before_index >= 30
-        before_name = widget.get_option_at_index(before_index).value
+        widget.focus()
+        widget.move_cursor(widget.nodes["topic:/camera_035/image_raw"])
+        widget.scroll_to_node(widget.cursor_node, animate=False)
+        await pilot.pause()
+        before_name = widget.cursor_node.data.key
         before_scroll = widget.scroll_y
         assert before_scroll > 0
         scans_before = discovery.calls
         await pilot.press("ctrl+r")
         await settle(app, pilot)
         assert discovery.calls > scans_before
-        assert widget.highlighted is not None
-        assert widget.get_option_at_index(widget.highlighted).value == before_name
+        assert widget.cursor_node.data.key == before_name
         assert widget.scroll_y == before_scroll
         assert widget.has_focus
         # Retain the topic identity even when a new earlier row moves its index.
         discovery.topics.insert(0, Topic("/added/image_raw", ("sensor_msgs/msg/Image",), "Camera"))
         await app.refresh_topics()
         await pilot.pause()
-        assert widget.get_option_at_index(widget.highlighted).value == before_name
+        assert widget.cursor_node.data.key == before_name
         assert widget.scroll_y == before_scroll
 
 
@@ -632,8 +672,6 @@ async def test_offline_profile_topics_can_be_removed_individually(bundle):
         app.rebuild_topics()
         app.query_one("#category", Select).value = "Offline"
         await pilot.pause()
-        widget = app.query_one("#topics", SelectionList)
-        assert widget.selected == ["/offline/camera"]
-        assert await pilot.click("#topics", offset=(2, 1))
-        await pilot.pause()
+        assert {t.name for t in app.visible_topics()} == {"/offline/camera"}
+        await choose_topic(app, pilot, "/offline/camera")
         assert app.selected == {"/imu"}
