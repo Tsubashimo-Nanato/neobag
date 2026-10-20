@@ -41,6 +41,9 @@ async def test_folding_and_namespace_selection_are_separate_actions(bundle):
         assert not namespace.is_expanded
         tree.move_cursor(namespace)
         tree.focus()
+        # Textual schedules focus with call_later; drain it before typing.
+        await pilot.pause()
+        assert tree.has_focus
         await pilot.press("enter")
         assert namespace.is_expanded
         assert not app.selected
@@ -117,6 +120,8 @@ async def test_selected_tray_removes_topics_hidden_by_search(bundle):
         assert tray_names(app) == app.selected
         tray.focus()
         tray.highlighted = 0
+        await pilot.pause()
+        assert tray.has_focus
         await pilot.press("space")
         assert app.selected == {"/rear/image_raw"}
         assert tray_names(app) == app.selected
