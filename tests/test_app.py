@@ -125,8 +125,11 @@ async def settle(app, pilot):
 
 async def click_button(app, pilot, selector):
     """Click inside either a regular bordered or a compact one-line button."""
-    button = app.query_one(selector, Button)
-    return await pilot.click(selector, offset=(2, button.region.height // 2))
+    button = app.screen.query_one(selector, Button)
+    clicked = await pilot.click(selector, offset=(2, button.region.height // 2))
+    # The click queues Button.Pressed on the app after the widget handles it.
+    await pilot.pause()
+    return clicked
 
 
 async def choose_topic(app, pilot, name, *, mouse=True):
@@ -190,7 +193,7 @@ async def test_controls_are_visible_clickable_and_recording_layout_fits(bundle, 
         assert await pilot.click("#name", offset=(2, 1))
         assert app.query_one("#name", Input).has_focus
         capture(app, f"{size[0]}x{size[1]}-ready")
-        assert await pilot.click("#start", offset=(2, 1))
+        assert await click_button(app, pilot, "#start")
         await settle(app, pilot)
         assert recorder.state == "recording"
         app.poll_recorder()
@@ -198,7 +201,7 @@ async def test_controls_are_visible_clickable_and_recording_layout_fits(bundle, 
         assert_in_view(app, "#stop")
         assert not app.query_one("#stop", Button).disabled
         capture(app, f"{size[0]}x{size[1]}-recording")
-        assert await pilot.click("#stop", offset=(2, 1))
+        assert await click_button(app, pilot, "#stop")
         assert recorder.state == "stopping"
         recorder.finish_stop()
         app.poll_recorder()
@@ -272,7 +275,7 @@ async def test_individual_mouse_and_space_selection_survive_filter_and_refresh(b
         assert app.query_one("#topics", TopicTree).chosen == CAMERA_NAMES
         discovery.topics = [topic for topic in SAMPLE_TOPICS if topic.name != "/rear/image_raw"]
         discovery.topics.append(Topic("/new", ("std_msgs/msg/String",), "Other"))
-        assert await pilot.click("#refresh", offset=(2, 1))
+        assert await click_button(app, pilot, "#refresh")
         await settle(app, pilot)
         assert app.selected == CAMERA_NAMES
         assert "/new" not in app.selected
@@ -382,7 +385,7 @@ async def test_discovery_failure_blocks_recording_until_successful_refresh(bundl
 
             await asyncio.wait_for(released(), timeout=3)
             previous_calls = discovery.calls
-            assert await pilot.click("#refresh", offset=(2, 1))
+            assert await click_button(app, pilot, "#refresh")
 
             async def scan_completed():
                 # The click may have queued its worker after settle() took its
@@ -584,7 +587,7 @@ async def test_logs_modal_remains_usable_while_recorder_and_resource_timers_tick
         await pilot.press("escape")
         await pilot.pause()
         assert app.query_one("#stop").visible
-        assert await pilot.click("#stop", offset=(2, 1))
+        assert await click_button(app, pilot, "#stop")
         recorder.finish_stop()
         app.poll_recorder()
 
@@ -613,31 +616,31 @@ async def test_named_profiles_save_load_edit_and_restart(bundle, tmp_path, size)
         await settle(app, pilot)
         app.selected = {"/imu", "/offline/camera"}
         app.rebuild_topics()
-        assert await pilot.click("#profiles")
+        assert await click_button(app, pilot, "#profiles")
         await pilot.pause()
         app.screen.query_one("#profile-name", Input).value = "Sensors"
-        assert await pilot.click("#profile-save")
+        assert await click_button(app, pilot, "#profile-save")
         await pilot.pause()
         assert app.profiles.read()["profiles"]["Sensors"]["topics"] == ["/imu", "/offline/camera"]
-        assert await pilot.click("#profile-back")
+        assert await click_button(app, pilot, "#profile-back")
         await pilot.pause()
-        assert await pilot.click("#none")
+        assert await click_button(app, pilot, "#none")
         assert not app.selected
         await pilot.press("ctrl+o")
         await pilot.pause()
         app.screen.query_one("#profile-choice", Select).value = "Sensors"
-        assert await pilot.click("#profile-load")
+        assert await click_button(app, pilot, "#profile-load")
         await pilot.pause()
         assert app.selected == {"/imu", "/offline/camera"}
         app.selected.add("/odom")
         app.rebuild_topics()
         await pilot.press("ctrl+o")
         await pilot.pause()
-        assert await pilot.click("#profile-save")
+        assert await click_button(app, pilot, "#profile-save")
         await pilot.pause()
         await pilot.pause(0.4)
         app.screen.query_one("#profile-name", Input).value = "Copy"
-        assert await pilot.click("#profile-save")
+        assert await click_button(app, pilot, "#profile-save")
         await pilot.pause()
         assert set(app.profiles.read()["profiles"]) >= {"Sensors", "Copy"}
         if os.environ.get("NEOBAG_CAPTURE_UI"):

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 from dataclasses import replace
+from itertools import count
 from pathlib import Path
 import sys
-import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -218,7 +219,12 @@ def test_svg_evidence_uses_only_visible_text(acceptance_module, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_capture_screenshots_follow_measured_workload_and_recovery(acceptance_module, tmp_path):
+async def test_capture_screenshots_follow_measured_workload_and_recovery(acceptance_module, tmp_path, monkeypatch):
+    # Model distinct telemetry intervals without depending on Windows' coarse
+    # GetTickCount64 clock on older Python versions. Keep the policy strict.
+    clock = SimpleNamespace(monotonic=count(100.0).__next__)
+    monkeypatch.setattr(acceptance_module, "time", clock)
+
     class ManualCapture(acceptance_module.CaptureApp):
         def on_mount(self):
             pass  # No ROS discovery, timers, monitor reads, or workloads in this test.
@@ -234,7 +240,7 @@ async def test_capture_screenshots_follow_measured_workload_and_recovery(accepta
             await pilot.pause()
             assert not app.pressure_shown
             assert not (tmp_path / "pressure.svg").exists()
-            app.pressure_start = time.monotonic()
+            app.pressure_start = clock.monotonic()
             for _ in range(3):
                 app.show_resources(high)
             await pilot.pause()
@@ -243,7 +249,7 @@ async def test_capture_screenshots_follow_measured_workload_and_recovery(accepta
             app.show_resources(replace(high, cpu_percent=20, warnings=()))
             await pilot.pause()
             assert not app.pressure_cleared  # Worker interval has not ended.
-            app.pressure_end = time.monotonic()
+            app.pressure_end = clock.monotonic()
             app.show_resources(replace(high, cpu_percent=None, warnings=()))
             await pilot.pause()
             assert not app.pressure_cleared  # Missing telemetry is not recovery.
